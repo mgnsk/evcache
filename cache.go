@@ -183,6 +183,7 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f Factory) (value inte
 		closer = r
 
 		r.wg.Add(1)
+		r.hits = 1
 		c.initRecord(r, value, ttl)
 		atomic.AddUint32(&c.size, 1)
 	})

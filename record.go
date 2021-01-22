@@ -29,8 +29,8 @@ func (r *record) load() (interface{}, bool) {
 	if r.isDeleted() {
 		return nil, false
 	}
-	atomic.AddUint64(&r.hits, 1)
 	r.wg.Add(1)
+	atomic.AddUint64(&r.hits, 1)
 	return r.value, true
 }
 
