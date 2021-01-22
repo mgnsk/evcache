@@ -24,8 +24,9 @@ type Factory func() (interface{}, error)
 // ExpiryCallback is a synchronous callback
 // called when a cache key expires.
 //
-// It blocks the same key from being accessed until
-// the callback returns.
+// It blocks the same key from being set until
+// the callback returns. It does not block the key
+// from being read.
 //
 // The returned boolean indicates whether to evict the key
 // when returning true or extend the time to live by the
