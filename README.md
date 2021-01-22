@@ -1,4 +1,4 @@
-# evcache
+# evcache [![Go Reference](https://pkg.go.dev/badge/github.com/mgnsk/evcache.svg)](https://pkg.go.dev/github.com/mgnsk/evcache)
 
 In-memory cache with eventually consistent LFU eviction.
 
