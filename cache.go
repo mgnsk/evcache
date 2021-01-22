@@ -270,6 +270,7 @@ func (c *Cache) Close() error {
 	})
 	c.quit <- struct{}{}
 	close(c.quit)
+	c.wg.Wait()
 	c.records.Range(func(key, _ interface{}) bool {
 		c.Evict(key)
 		return true
