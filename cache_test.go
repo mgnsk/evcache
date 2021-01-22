@@ -319,7 +319,7 @@ var _ = Describe("overflow when setting values", func() {
 				defer GinkgoRecover()
 				atomic.AddUint64(&evicted, 1)
 			}).
-			Size(uint32(n)).
+			Capacity(uint32(n)).
 			Build()
 	})
 
@@ -431,7 +431,7 @@ var _ = Describe("eventual overflow eviction order", func() {
 				defer GinkgoRecover()
 				evictedKeys <- key.(uint64)
 			}).
-			Size(uint32(n)).
+			Capacity(uint32(n)).
 			Build()
 	})
 
@@ -495,7 +495,7 @@ var _ = Describe("eventual overflow eviction order", func() {
 })
 
 func BenchmarkLFUContention(b *testing.B) {
-	c := evcache.New().Size(2).Build()
+	c := evcache.New().Capacity(2).Build()
 	c.Set(uint8(0), nil, 0)
 
 	var key uint64

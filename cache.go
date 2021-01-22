@@ -55,7 +55,7 @@ type Cache struct {
 	quit          chan struct{}
 	onExpiry      ExpiryCallback
 	afterEvict    EvictionCallback
-	maxSize       uint32
+	capacity      uint32
 	backpressure  uint32
 	size          uint32
 }
@@ -98,8 +98,8 @@ func (build Builder) AfterEviction(cb EvictionCallback) Builder {
 	}
 }
 
-// Size configures the cache with specified size limit.
-// If cache exceeds the size limit, the least frequently
+// Capacity configures the cache with specified size limit.
+// If cache exceeds the limit, the least frequently
 // used records are evicted.
 //
 // New records are inserted as the most frequently used
@@ -107,14 +107,14 @@ func (build Builder) AfterEviction(cb EvictionCallback) Builder {
 //
 // The maximum overflow at any given moment is the number of concurrent users.
 // To limit overflow, limit concurrency.
-func (build Builder) Size(size uint32) Builder {
+func (build Builder) Capacity(size uint32) Builder {
 	return func(c *Cache) {
 		build(c)
 
 		c.cond = sync.NewCond(&c.mu)
 		c.list = list.New()
 		c.evictRequests = make(chan struct{}, 1)
-		c.maxSize = size
+		c.capacity = size
 	}
 }
 
@@ -317,10 +317,10 @@ func (c *Cache) initRecord(r *record, value interface{}, ttl time.Duration) {
 }
 
 func (c *Cache) wouldOverflow(size, bp uint32) bool {
-	if size > c.maxSize && size-c.maxSize > bp {
-		panic(fmt.Sprintf("evcache: invariant failed: overflow cannot exceed backpressure, overflow %d, bp: %d", size-c.maxSize, bp))
+	if size > c.capacity && size-c.capacity > bp {
+		panic(fmt.Sprintf("evcache: invariant failed: overflow cannot exceed backpressure, overflow %d, bp: %d", size-c.capacity, bp))
 	}
-	return size+bp > c.maxSize
+	return size+bp > c.capacity
 }
 
 func (c *Cache) triggerEviction() {
@@ -332,7 +332,7 @@ func (c *Cache) triggerEviction() {
 }
 
 func (c *Cache) doGuarded(f func()) {
-	if c.maxSize > 0 {
+	if c.capacity > 0 {
 		// It is important for size to be loaded
 		// before incrementing backpressure or a
 		// race condition will occur and fail
@@ -351,7 +351,7 @@ func (c *Cache) doGuarded(f func()) {
 			c.mu.Lock()
 			defer c.mu.Unlock()
 			defer func() {
-				if atomic.LoadUint32(&c.size) > c.maxSize {
+				if atomic.LoadUint32(&c.size) > c.capacity {
 					// Cannot decrease backpressure until overflow cleared.
 					c.triggerEviction()
 					c.cond.Wait()
@@ -379,7 +379,7 @@ func (c *Cache) runEvictionLoop() {
 		case <-c.evictRequests:
 			nowNano = time.Now().UnixNano()
 		}
-		if c.maxSize > 0 {
+		if c.capacity > 0 {
 			// Acquire a read lock to blend
 			// in with concurrent readers.
 			c.mu.RLock()
@@ -437,7 +437,7 @@ func (c *Cache) processRecords(now int64) {
 			}()
 			return true
 		}
-		if c.maxSize == 0 {
+		if c.capacity == 0 {
 			return true
 		}
 		hits := atomic.SwapUint64(&r.hits, 0)
@@ -472,7 +472,7 @@ func (c *Cache) evictLFU() {
 	pop := func() (key interface{}, success bool) {
 		c.listMu.Lock()
 		defer c.listMu.Unlock()
-		if c.list.Len() > int(c.maxSize) {
+		if c.list.Len() > int(c.capacity) {
 			return c.list.Remove(c.list.Front()), true
 		}
 		return nil, false
