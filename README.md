@@ -14,3 +14,7 @@ The cache does not prevent size limit from being exceeded - the maximum overflow
 is the number of concurrent writers at any given moment.
 
 To limit maximum overflow one must limit concurrency externally (for example with a channel semaphore).
+
+### TODO
+* Once submitted to pkg.go.dev, add link here
+* Improve the readme
