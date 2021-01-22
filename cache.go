@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"fmt"
 	"io"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -396,42 +397,36 @@ func (c *Cache) runEvictionLoop() {
 func (c *Cache) processRecords(now int64) {
 	c.records.Range(func(key, value interface{}) bool {
 		r := value.(*record)
-		if r.isDeleted() {
-			return true
-		}
 		r.mu.RLock()
-		if r.isDeleted() {
-			// The record was deleted after we started Range.
+		// An expiry callback might be active
+		// or the record was deleted.
+		if r.expires == math.MaxInt64 || r.isDeleted() {
 			r.mu.RUnlock()
 			return true
 		}
 		if !r.isExpired(now) {
 			defer r.mu.RUnlock()
 		} else {
-			// Delete but do not decrease c.size yet.
-			val, loaded := c.records.LoadAndDelete(key)
-			if !loaded {
-				r.mu.RUnlock()
-				return true
-			}
-			if r != val.(*record) {
-				r.mu.RUnlock()
-				panic("evcache: invariant failed: record is not the same")
-			}
-			// Temporarily delete for the next eviction cycle to skip it.
-			// The key is read-locked until evicted or extended.
-			// The ownership of record is transferred to goroutine.
-			r.delete()
+			// Set the expiring flag for the next eviction cycle to skip it.
+			// The key can be read but not written until evicted or extended.
+			r.expires = math.MaxInt64
 			c.wg.Add(1)
 			go func() {
 				defer c.wg.Done()
 				defer r.mu.RUnlock()
 				if c.onExpiry != nil && !c.onExpiry(key, r.value) {
 					// Restore the record.
-					r.touch()
-					c.records.Store(key, r)
+					r.expires = time.Now().Add(r.ttl).UnixNano()
 					return
 				}
+				rec, loaded := c.records.LoadAndDelete(key)
+				if !loaded {
+					panic("evcache: invariant failed: record does not exist")
+				}
+				if r != rec.(*record) {
+					panic("evcache: invariant failed: record is not the same")
+				}
+				r.delete()
 				c.runAfterEvict(key, r)
 				atomic.AddUint32(&c.size, ^uint32(0))
 			}()

@@ -162,14 +162,83 @@ var _ = Describe("autoexpiry", func() {
 		<-evicted
 		dur := time.Since(start)
 
-		// This may sometimes fail due to differences
-		// between monotonic and wall clock measurements.
-		// The cache internally uses a wall clock.
-		Expect(dur).To(BeNumerically(">=", 2*ttl))
+		// Add a grace duration for monotonic
+		// and wall clock differences.
+		Expect(dur + time.Millisecond).To(BeNumerically(">=", 2*ttl))
 
 		Eventually(func() int {
 			return c.Len()
 		}).Should(BeZero())
+	})
+})
+
+var _ = Describe("expiry callback", func() {
+	var (
+		expiry chan struct{}
+		c      *evcache.Cache
+	)
+
+	BeforeEach(func() {
+		expiry = make(chan struct{})
+		c = evcache.New().
+			OnExpiry(func(_, _ interface{}) (evict bool) {
+				defer GinkgoRecover()
+				expiry <- struct{}{}
+				return true
+			}).
+			Build()
+
+		// set a record and let it expire.
+		c.Set("key", "value", time.Nanosecond)
+	})
+
+	AfterEach(func() {
+		c.Close()
+		Expect(c.Len()).To(BeZero())
+	})
+
+	When("expiry callback blocks", func() {
+		Specify("the key can be read", func() {
+			value, closer, err := c.Get("key")
+			Expect(err).To(BeNil())
+			closer.Close()
+			Expect(value).To(Equal("value"))
+
+			value, closer, err = c.Fetch("key", 0, func() (interface{}, error) {
+				panic("did not expect fetch")
+			})
+			Expect(err).To(BeNil())
+			closer.Close()
+			Expect(value).To(Equal("value"))
+
+			<-expiry
+
+			Eventually(func() int {
+				return c.Len()
+			}).Should(BeZero())
+		})
+
+		Specify("the key can't be written", func() {
+			// Wait for eviction cycle to have run.
+			time.Sleep(2 * evcache.EvictionInterval)
+
+			// After 2 cycles unblock the expiry callback,
+			// releasing the key.
+			time.AfterFunc(2*evcache.EvictionInterval, func() {
+				<-expiry
+			})
+
+			// Set should now block until key released
+			// and we can set a new value.
+			start := time.Now()
+			replaced := c.Set("key", "value", 0)
+			end := time.Since(start)
+			Expect(replaced).To(BeFalse())
+
+			// Add a grace duration for monotonic
+			// and wall clock differences.
+			Expect(end + time.Millisecond).To(BeNumerically(">=", 2*evcache.EvictionInterval))
+		})
 	})
 })
 

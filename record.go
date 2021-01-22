@@ -47,6 +47,5 @@ func (r *record) isExpired(now int64) bool {
 }
 
 func (r *record) touch() {
-	atomic.StoreUint32(&r.deleted, 0)
 	r.expires = time.Now().Add(r.ttl).UnixNano()
 }
