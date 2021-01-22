@@ -437,7 +437,7 @@ func (c *Cache) processRecords(now int64) {
 		if c.capacity == 0 {
 			return true
 		}
-		hits := atomic.SwapUint64(&r.hits, 0)
+		hits := atomic.SwapUint32(&r.hits, 0)
 		// The elem does not need moving.
 		if hits == 0 && r.elem != nil {
 			return true
@@ -450,7 +450,7 @@ func (c *Cache) processRecords(now int64) {
 			// Update the record's position in the list
 			// based on hits delta.
 			target := r.elem
-			for i := uint64(0); i < hits; i++ {
+			for i := uint32(0); i < hits; i++ {
 				if next := target.Next(); next != nil {
 					target = next
 				} else {

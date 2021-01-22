@@ -13,7 +13,7 @@ type record struct {
 	elem    *list.Element
 	wg      sync.WaitGroup
 	deleted uint32
-	hits    uint64
+	hits    uint32
 	ttl     time.Duration
 	expires int64
 }
@@ -30,7 +30,7 @@ func (r *record) load() (interface{}, bool) {
 		return nil, false
 	}
 	r.wg.Add(1)
-	atomic.AddUint64(&r.hits, 1)
+	atomic.AddUint32(&r.hits, 1)
 	return r.value, true
 }
 

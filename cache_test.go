@@ -5,7 +5,6 @@ import (
 	"math/rand"
 	"sync"
 	"sync/atomic"
-	"testing"
 	"time"
 
 	"github.com/mgnsk/evcache"
@@ -376,7 +375,7 @@ var _ = Describe("repeatedly setting the same key", func() {
 var _ = Describe("overflow when setting values", func() {
 	var (
 		n        = 10
-		overflow = 100
+		overflow = 1000
 		evicted  uint64
 		c        *evcache.Cache
 	)
@@ -427,7 +426,7 @@ var _ = Describe("overflow when setting values", func() {
 			var (
 				wg          sync.WaitGroup
 				deleted     uint64
-				concurrency = 16
+				concurrency = 64
 			)
 
 			sem := make(chan struct{}, concurrency)
@@ -562,20 +561,3 @@ var _ = Describe("eventual overflow eviction order", func() {
 		})
 	})
 })
-
-func BenchmarkLFUContention(b *testing.B) {
-	c := evcache.New().Capacity(2).Build()
-	c.Set(uint8(0), nil, 0)
-
-	var key uint64
-	b.ReportAllocs()
-	b.ResetTimer()
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			_, closer, _ := c.Fetch(atomic.AddUint64(&key, 1), 0, func() (interface{}, error) {
-				return 0, nil
-			})
-			closer.Close()
-		}
-	})
-}

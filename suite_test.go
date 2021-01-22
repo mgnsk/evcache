@@ -2,9 +2,11 @@ package evcache_test
 
 import (
 	"math/rand"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/mgnsk/evcache"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
@@ -16,4 +18,19 @@ func init() {
 func TestCache(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "evcache suite")
+}
+
+func BenchmarkLFUContention(b *testing.B) {
+	c := evcache.New().Capacity(2).Build()
+	var key uint64
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_, closer, _ := c.Fetch(atomic.AddUint64(&key, 1), 0, func() (interface{}, error) {
+				return 0, nil
+			})
+			closer.Close()
+		}
+	})
 }
