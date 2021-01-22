@@ -310,7 +310,7 @@ func (c *Cache) initRecord(r *record, value interface{}, ttl time.Duration) {
 	r.value = value
 	if ttl > 0 {
 		r.ttl = ttl
-		r.touch()
+		r.expires = time.Now().Add(ttl).UnixNano()
 		c.onceLoop.Do(func() {
 			go c.runEvictionLoop()
 		})
@@ -400,23 +400,24 @@ func (c *Cache) processRecords(now int64) {
 		r.mu.RLock()
 		// An expiry callback might be active
 		// or the record was deleted.
-		if r.expires == math.MaxInt64 || r.isDeleted() {
+		expires := atomic.LoadInt64(&r.expires)
+		if expires == math.MaxInt64 || r.isDeleted() {
 			r.mu.RUnlock()
 			return true
 		}
-		if !r.isExpired(now) {
+		if expires == 0 || expires > now {
 			defer r.mu.RUnlock()
 		} else {
 			// Set the expiring flag for the next eviction cycle to skip it.
 			// The key can be read but not written until evicted or extended.
-			r.expires = math.MaxInt64
+			atomic.StoreInt64(&r.expires, math.MaxInt64)
 			c.wg.Add(1)
 			go func() {
 				defer c.wg.Done()
 				defer r.mu.RUnlock()
 				if c.onExpiry != nil && !c.onExpiry(key, r.value) {
 					// Restore the record.
-					r.expires = time.Now().Add(r.ttl).UnixNano()
+					atomic.StoreInt64(&r.expires, time.Now().Add(r.ttl).UnixNano())
 					return
 				}
 				rec, loaded := c.records.LoadAndDelete(key)

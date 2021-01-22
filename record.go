@@ -41,11 +41,3 @@ func (r *record) isDeleted() bool {
 func (r *record) delete() {
 	atomic.StoreUint32(&r.deleted, 1)
 }
-
-func (r *record) isExpired(now int64) bool {
-	return r.expires > 0 && r.expires < now
-}
-
-func (r *record) touch() {
-	r.expires = time.Now().Add(r.ttl).UnixNano()
-}
