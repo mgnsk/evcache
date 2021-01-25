@@ -42,8 +42,8 @@ var _ = Describe("setting values", func() {
 			Expect(replaced).To(BeTrue())
 			Expect(c.Len()).To(Equal(1))
 
-			value, closer, err := c.Get("key")
-			Expect(err).To(BeNil())
+			value, closer, exists := c.Get("key")
+			Expect(exists).To(BeTrue())
 			defer closer.Close()
 			Expect(value).To(Equal("newValue"))
 		})
@@ -87,8 +87,8 @@ var _ = Describe("fetching values", func() {
 			defer closer.Close()
 			Expect(value).To(Equal("value"))
 
-			value, closer, err = c.Get("key")
-			Expect(err).To(BeNil())
+			value, closer, exists := c.Get("key")
+			Expect(exists).To(BeTrue())
 			defer closer.Close()
 			Expect(value).To(Equal("value"))
 
@@ -434,8 +434,8 @@ var _ = Describe("eventual overflow eviction order", func() {
 				_ = c.Set(k, nil, 0)
 				// Make its hit count reflect the key.
 				for j := 1; j <= int(k); j++ {
-					_, closer, err := c.Get(k)
-					Expect(err).To(BeNil())
+					_, closer, exists := c.Get(k)
+					Expect(exists).To(BeTrue())
 					closer.Close()
 				}
 			}

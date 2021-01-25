@@ -104,20 +104,20 @@ func (build Builder) Build() *Cache {
 	return c
 }
 
-// Get returns the value stored in the cache for a key, or an error
-// if no value is present.
+// Get returns the value stored in the cache for a key. The boolean indicates
+// whether a value was found.
 //
 // When the returned value is not used anymore, the caller MUST call closer.Close()
 // or a memory leak will occur.
-func (c *Cache) Get(key interface{}) (value interface{}, closer io.Closer, err error) {
+func (c *Cache) Get(key interface{}) (value interface{}, closer io.Closer, exists bool) {
 	for {
 		rec, ok := c.records.Load(key)
 		if !ok {
-			return nil, nil, ErrNotFound
+			return nil, nil, false
 		}
 		r := rec.(*record)
 		if value, ok := r.load(); ok {
-			return value, r, nil
+			return value, r, true
 		}
 	}
 }
