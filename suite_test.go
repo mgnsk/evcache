@@ -21,7 +21,7 @@ func TestCache(t *testing.T) {
 }
 
 func BenchmarkLFUContention(b *testing.B) {
-	c := evcache.New().Capacity(2).Build()
+	c := evcache.New().WithCapacity(2).Build()
 	var key uint64
 	b.ReportAllocs()
 	b.ResetTimer()

@@ -12,12 +12,12 @@ import (
 // EvictionInterval is the interval for background loop.
 var EvictionInterval = time.Second
 
-// Factory is called when *Cache.Fetch has a miss.
+// FetchCallback is called when *Cache.Fetch has a miss.
 //
 // It blocks the same key from being accessed until
 // the callbak returns and must return a new value
 // or an error.
-type Factory func() (interface{}, error)
+type FetchCallback func() (interface{}, error)
 
 // EvictionCallback is an asynchronous callback
 // called after cache key eviction.
@@ -67,8 +67,8 @@ func New() Builder {
 	}
 }
 
-// AfterEviction specifies an asynchronous eviction callback.
-func (build Builder) AfterEviction(cb EvictionCallback) Builder {
+// WithAfterEviction specifies an asynchronous eviction callback.
+func (build Builder) WithAfterEviction(cb EvictionCallback) Builder {
 	return func(c *Cache) {
 		build(c)
 
@@ -76,7 +76,7 @@ func (build Builder) AfterEviction(cb EvictionCallback) Builder {
 	}
 }
 
-// Capacity configures the cache with specified size limit.
+// WithCapacity configures the cache with specified size limit.
 // If cache exceeds the limit, the least frequently
 // used records are evicted.
 //
@@ -85,7 +85,7 @@ func (build Builder) AfterEviction(cb EvictionCallback) Builder {
 //
 // The maximum overflow at any given moment is the number of concurrent users.
 // To limit overflow, limit concurrency.
-func (build Builder) Capacity(size uint32) Builder {
+func (build Builder) WithCapacity(size uint32) Builder {
 	return func(c *Cache) {
 		build(c)
 
@@ -130,7 +130,7 @@ func (c *Cache) Get(key interface{}) (value interface{}, closer io.Closer, exist
 //
 // If the cache has a size limit and it is exceeded, it may block
 // until the overflow is evicted.
-func (c *Cache) Fetch(key interface{}, ttl time.Duration, f Factory) (value interface{}, closer io.Closer, err error) {
+func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (value interface{}, closer io.Closer, err error) {
 	c.doGuarded(func() {
 		var r *record
 		for {
@@ -231,7 +231,7 @@ func (c *Cache) Flush() {
 }
 
 // Len returns the number of keys in the cache.
-func (c *Cache) Len() (length int) {
+func (c *Cache) Len() int {
 	return int(atomic.LoadUint32(&c.size))
 }
 
