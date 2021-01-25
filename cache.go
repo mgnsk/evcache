@@ -4,14 +4,12 @@ import (
 	"container/list"
 	"fmt"
 	"io"
-	"math"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
-// EvictionInterval is the interval for background loop
-// which handles key expiry.
+// EvictionInterval is the interval for background loop.
 var EvictionInterval = time.Second
 
 // Factory is called when *Cache.Fetch has a miss.
@@ -20,18 +18,6 @@ var EvictionInterval = time.Second
 // the callbak returns and must return a new value
 // or an error.
 type Factory func() (interface{}, error)
-
-// ExpiryCallback is a synchronous callback
-// called when a cache key expires.
-//
-// It blocks the same key from being set until
-// the callback returns. It does not block the key
-// from being read.
-//
-// The returned boolean indicates whether to evict the key
-// when returning true or extend the time to live by the
-// original ttl value when returning false.
-type ExpiryCallback func(key, value interface{}) (evict bool)
 
 // EvictionCallback is an asynchronous callback
 // called after cache key eviction.
@@ -55,7 +41,6 @@ type Cache struct {
 	list          *list.List
 	evictRequests chan struct{}
 	quit          chan struct{}
-	onExpiry      ExpiryCallback
 	afterEvict    EvictionCallback
 	capacity      uint32
 	backpressure  uint32
@@ -79,15 +64,6 @@ func New() Builder {
 			},
 		}
 		c.quit = make(chan struct{})
-	}
-}
-
-// OnExpiry specifies a synchronous expiry callback.
-func (build Builder) OnExpiry(cb ExpiryCallback) Builder {
-	return func(c *Cache) {
-		build(c)
-
-		c.onExpiry = cb
 	}
 }
 
@@ -400,36 +376,23 @@ func (c *Cache) processRecords(now int64) {
 	c.records.Range(func(key, value interface{}) bool {
 		r := value.(*record)
 		r.mu.RLock()
-		// An expiry callback might be active
-		// or the record was deleted.
-		expires := atomic.LoadInt64(&r.expires)
-		if expires == math.MaxInt64 || r.isDeleted() {
-			r.mu.RUnlock()
+		defer r.mu.RUnlock()
+		if r.isDeleted() {
 			return true
 		}
-		if expires == 0 || expires > now {
-			defer r.mu.RUnlock()
-		} else {
-			// Set the expiring flag for the next eviction cycle to skip it.
-			// The key can be read but not written until evicted or extended.
-			atomic.StoreInt64(&r.expires, math.MaxInt64)
-			c.wg.Add(1)
+		if r.expires > 0 && r.expires < now {
+			rec, loaded := c.records.LoadAndDelete(key)
+			if !loaded {
+				return true
+			}
+			if r != rec.(*record) {
+				panic("evcache: invariant failed: record is not the same")
+			}
+			r.delete()
 			go func() {
-				defer c.wg.Done()
-				defer r.mu.RUnlock()
-				if c.onExpiry != nil && !c.onExpiry(key, r.value) {
-					// Restore the record.
-					atomic.StoreInt64(&r.expires, time.Now().Add(r.ttl).UnixNano())
-					return
-				}
-				rec, loaded := c.records.LoadAndDelete(key)
-				if !loaded {
-					panic("evcache: invariant failed: record does not exist")
-				}
-				if r != rec.(*record) {
-					panic("evcache: invariant failed: record is not the same")
-				}
-				r.delete()
+				// Lock to guard record's waitgroup.
+				r.mu.Lock()
+				defer r.mu.Unlock()
 				c.runAfterEvict(key, r)
 				atomic.AddUint32(&c.size, ^uint32(0))
 			}()
