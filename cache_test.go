@@ -130,7 +130,7 @@ var _ = Describe("autoexpiry", func() {
 	BeforeEach(func() {
 		evicted = make(chan bool)
 		c = evcache.New().
-			WithAfterEviction(func(_, _ interface{}) {
+			WithEvictionCallback(func(_, _ interface{}) {
 				defer GinkgoRecover()
 				close(evicted)
 			}).
@@ -169,7 +169,7 @@ var _ = Describe("eviction callback", func() {
 	BeforeEach(func() {
 		evicted = make(chan uint64, 2)
 		c = evcache.New().
-			WithAfterEviction(func(_, value interface{}) {
+			WithEvictionCallback(func(_, value interface{}) {
 				defer GinkgoRecover()
 				evicted <- value.(uint64)
 			}).
@@ -255,7 +255,7 @@ var _ = Describe("repeatedly setting the same key", func() {
 
 	BeforeEach(func() {
 		c = evcache.New().
-			WithAfterEviction(func(_, _ interface{}) {
+			WithEvictionCallback(func(_, _ interface{}) {
 				defer GinkgoRecover()
 				atomic.AddUint64(&evicted, 1)
 			}).
@@ -302,7 +302,7 @@ var _ = Describe("overflow when setting values", func() {
 	BeforeEach(func() {
 		evicted = 0
 		c = evcache.New().
-			WithAfterEviction(func(_, _ interface{}) {
+			WithEvictionCallback(func(_, _ interface{}) {
 				defer GinkgoRecover()
 				atomic.AddUint64(&evicted, 1)
 			}).
@@ -414,7 +414,7 @@ var _ = Describe("eventual overflow eviction order", func() {
 		evictedKeys = make(chan uint64, n*warmupRounds)
 		key = 0
 		c = evcache.New().
-			WithAfterEviction(func(key, _ interface{}) {
+			WithEvictionCallback(func(key, _ interface{}) {
 				defer GinkgoRecover()
 				evictedKeys <- key.(uint64)
 			}).

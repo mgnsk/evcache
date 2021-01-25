@@ -67,8 +67,8 @@ func New() Builder {
 	}
 }
 
-// WithAfterEviction specifies an asynchronous eviction callback.
-func (build Builder) WithAfterEviction(cb EvictionCallback) Builder {
+// WithEvictionCallback specifies an asynchronous eviction callback.
+func (build Builder) WithEvictionCallback(cb EvictionCallback) Builder {
 	return func(c *Cache) {
 		build(c)
 
