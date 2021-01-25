@@ -4,7 +4,6 @@ import (
 	"container/list"
 	"sync"
 	"sync/atomic"
-	"time"
 )
 
 type record struct {
@@ -14,7 +13,6 @@ type record struct {
 	wg      sync.WaitGroup
 	deleted uint32
 	hits    uint32
-	ttl     time.Duration
 	expires int64
 }
 

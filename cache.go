@@ -256,22 +256,6 @@ func (c *Cache) Close() error {
 	return nil
 }
 
-func (c *Cache) runAfterEvict(key interface{}, r *record) {
-	if r.elem != nil {
-		c.listMu.Lock()
-		c.list.Remove(r.elem)
-		c.listMu.Unlock()
-	}
-	if c.afterEvict != nil {
-		c.wg.Add(1)
-		go func() {
-			defer c.wg.Done()
-			r.wg.Wait()
-			c.afterEvict(key, r.value)
-		}()
-	}
-}
-
 func (c *Cache) swap(key interface{}, old, new *record) (swapped bool) {
 	old.mu.Lock()
 	defer old.mu.Unlock()
@@ -287,7 +271,6 @@ func (c *Cache) swap(key interface{}, old, new *record) (swapped bool) {
 func (c *Cache) initRecord(r *record, value interface{}, ttl time.Duration) {
 	r.value = value
 	if ttl > 0 {
-		r.ttl = ttl
 		r.expires = time.Now().Add(ttl).UnixNano()
 		c.onceLoop.Do(func() {
 			go c.runEvictionLoop()
@@ -381,21 +364,7 @@ func (c *Cache) processRecords(now int64) {
 			return true
 		}
 		if r.expires > 0 && r.expires < now {
-			rec, loaded := c.records.LoadAndDelete(key)
-			if !loaded {
-				return true
-			}
-			if r != rec.(*record) {
-				panic("evcache: invariant failed: record is not the same")
-			}
-			r.delete()
-			go func() {
-				// Lock to guard record's waitgroup.
-				r.mu.Lock()
-				defer r.mu.Unlock()
-				c.runAfterEvict(key, r)
-				atomic.AddUint32(&c.size, ^uint32(0))
-			}()
+			c.expireRecord(key, r)
 			return true
 		}
 		if c.capacity == 0 {
@@ -427,6 +396,40 @@ func (c *Cache) processRecords(now int64) {
 		}
 		return true
 	})
+}
+
+func (c *Cache) expireRecord(key interface{}, r *record) {
+	rec, loaded := c.records.LoadAndDelete(key)
+	if !loaded {
+		return
+	}
+	if r != rec.(*record) {
+		panic("evcache: invariant failed: record is not the same")
+	}
+	r.delete()
+	go func() {
+		// Lock to guard record's waitgroup.
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		c.runAfterEvict(key, r)
+		atomic.AddUint32(&c.size, ^uint32(0))
+	}()
+}
+
+func (c *Cache) runAfterEvict(key interface{}, r *record) {
+	if r.elem != nil {
+		c.listMu.Lock()
+		c.list.Remove(r.elem)
+		c.listMu.Unlock()
+	}
+	if c.afterEvict != nil {
+		c.wg.Add(1)
+		go func() {
+			defer c.wg.Done()
+			r.wg.Wait()
+			c.afterEvict(key, r.value)
+		}()
+	}
 }
 
 func (c *Cache) evictLFU() {
