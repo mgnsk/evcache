@@ -241,9 +241,7 @@ func (c *Cache) Len() int {
 // It is not safe to close the cache
 // while in use.
 func (c *Cache) Close() error {
-	c.onceLoop.Do(func() {
-		go c.runEvictionLoop()
-	})
+	c.ensureEviction()
 	c.quit <- struct{}{}
 	close(c.quit)
 	c.wg.Wait()
@@ -272,9 +270,7 @@ func (c *Cache) initRecord(r *record, value interface{}, ttl time.Duration) {
 	r.value = value
 	if ttl > 0 {
 		r.expires = time.Now().Add(ttl).UnixNano()
-		c.onceLoop.Do(func() {
-			go c.runEvictionLoop()
-		})
+		c.ensureEviction()
 	}
 }
 
@@ -307,9 +303,7 @@ func (c *Cache) doGuarded(f func()) {
 			c.mu.RLock()
 			defer c.mu.RUnlock()
 		} else {
-			c.onceLoop.Do(func() {
-				go c.runEvictionLoop()
-			})
+			c.ensureEviction()
 			c.mu.Lock()
 			defer c.mu.Unlock()
 			// Cannot decrease backpressure until overflow cleared.
@@ -324,29 +318,28 @@ func (c *Cache) doGuarded(f func()) {
 	f()
 }
 
-func (c *Cache) runEvictionLoop() {
-	ticker := time.NewTicker(EvictionInterval)
-	defer ticker.Stop()
-	for {
-		var nowNano int64
-		select {
-		case <-c.quit:
-			return
-		case now := <-ticker.C:
-			nowNano = now.UnixNano()
-		case <-c.evictRequests:
-			nowNano = time.Now().UnixNano()
-		}
-		if c.capacity > 0 {
-			c.mu.RLock()
-			c.processRecords(nowNano)
-			c.evictLFU()
-			c.cond.Broadcast()
-			c.mu.RUnlock()
-		} else {
-			c.processRecords(nowNano)
-		}
-	}
+func (c *Cache) ensureEviction() {
+	c.onceLoop.Do(func() {
+		go func() {
+			ticker := time.NewTicker(EvictionInterval)
+			defer ticker.Stop()
+			for {
+				var nowNano int64
+				select {
+				case <-c.quit:
+					return
+				case now := <-ticker.C:
+					nowNano = now.UnixNano()
+				case <-c.evictRequests:
+					nowNano = time.Now().UnixNano()
+				}
+				c.processRecords(nowNano)
+				if c.capacity > 0 {
+					c.evictLFU()
+				}
+			}
+		}()
+	})
 }
 
 func (c *Cache) processRecords(now int64) {
@@ -439,8 +432,10 @@ func (c *Cache) evictLFU() {
 	for {
 		key, ok := pop()
 		if !ok {
-			return
+			c.cond.Signal()
+			break
 		}
 		c.Evict(key)
+		c.cond.Signal()
 	}
 }
