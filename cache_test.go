@@ -143,20 +143,17 @@ var _ = Describe("autoexpiry", func() {
 	})
 
 	Specify("value with non-zero TTL will be evicted", func() {
-		ttl := 15 * time.Millisecond
+		ttl := 4 * evcache.EvictionInterval
 		c.Set("key", "value", ttl)
 
 		start := time.Now()
 		<-evicted
-		dur := time.Since(start)
-
-		// Add a grace duration for monotonic
-		// and wall clock differences.
-		Expect(dur + time.Millisecond).To(BeNumerically(">=", ttl))
 
 		Eventually(func() int {
 			return c.Len()
 		}).Should(BeZero())
+
+		Expect(time.Since(start)).To(BeNumerically(">=", 2*evcache.EvictionInterval))
 	})
 })
 

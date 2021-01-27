@@ -312,13 +312,9 @@ func (c *Cache) doGuarded(f func()) {
 			})
 			c.mu.Lock()
 			defer c.mu.Unlock()
-			defer func() {
-				if atomic.LoadUint32(&c.size) > c.capacity {
-					// Cannot decrease backpressure until overflow cleared.
-					c.triggerEviction()
-					c.cond.Wait()
-				}
-			}()
+			// Cannot decrease backpressure until overflow cleared.
+			defer c.cond.Wait()
+			defer c.triggerEviction()
 			// Trigger an eviction or hitchhike onto an existing request.
 			// Cannot continue until overflow cleared.
 			c.triggerEviction()
@@ -342,8 +338,6 @@ func (c *Cache) runEvictionLoop() {
 			nowNano = time.Now().UnixNano()
 		}
 		if c.capacity > 0 {
-			// Acquire a read lock to blend
-			// in with concurrent readers.
 			c.mu.RLock()
 			c.processRecords(nowNano)
 			c.evictLFU()
@@ -408,7 +402,8 @@ func (c *Cache) expireRecord(key interface{}, r *record) {
 	}
 	r.delete()
 	go func() {
-		// Lock to guard record's waitgroup.
+		// Lock to wait for readers to finish reading r.deleted
+		// or adding to waitgroup.
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		c.runAfterEvict(key, r)
