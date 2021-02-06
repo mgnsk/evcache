@@ -1,19 +1,19 @@
 package evcache
 
 import (
-	"container/list"
 	"sync"
 	"sync/atomic"
 )
 
 type record struct {
-	mu      sync.RWMutex
-	value   interface{}
-	elem    *list.Element
-	wg      sync.WaitGroup
-	deleted uint32
-	hits    uint32
-	expires int64
+	mu          sync.RWMutex
+	value       interface{}
+	once        sync.Once
+	wg          sync.WaitGroup
+	zombie      bool
+	softDeleted bool
+	hits        uint32
+	expires     int64
 }
 
 func (r *record) Close() error {
@@ -21,21 +21,12 @@ func (r *record) Close() error {
 	return nil
 }
 
-func (r *record) load() (interface{}, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	if r.isDeleted() {
-		return nil, false
-	}
+func (r *record) load() interface{} {
 	r.wg.Add(1)
 	atomic.AddUint32(&r.hits, 1)
-	return r.value, true
+	return r.value
 }
 
-func (r *record) isDeleted() bool {
-	return atomic.LoadUint32(&r.deleted) != 0
-}
-
-func (r *record) delete() {
-	atomic.StoreUint32(&r.deleted, 1)
+func (r *record) valid() bool {
+	return !r.zombie && !r.softDeleted
 }

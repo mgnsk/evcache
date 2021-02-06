@@ -1,50 +1,49 @@
 package evcache
 
 import (
-	"container/list"
-	"fmt"
+	"container/ring"
 	"io"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
-// EvictionInterval is the interval for background loop.
-var EvictionInterval = time.Second
-
-// FetchCallback is called when *Cache.Fetch has a miss.
+// SyncInterval is the interval for background loop.
 //
-// It blocks the same key from being accessed until
-// the callbak returns and must return a new value
-// or an error.
+// It is the interval for which the LFU order lags behind
+// hit statistics of each record which is used to
+// relatively move the records.
+//
+// Insert and delete are immediate.
+var SyncInterval = time.Second
+
+// FetchCallback is called when *Cache.Fetch has a miss
+// and must return a new value or an error.
+//
+// It blocks the key from being accessed until the
+// callback returns.
 type FetchCallback func() (interface{}, error)
 
-// EvictionCallback is an asynchronous callback
-// called after cache key eviction.
+// EvictionCallback is an asynchronous callback which
+// is called after cache key eviction.
 //
-// It is not called until all io.Closers returned
-// alongside the value have been closed.
+// It waits until all io.Closers returned by Get or Fetch
+// are closed.
 type EvictionCallback func(key, value interface{})
 
-// Cache is a sync.Map wrapper with eventually consistent
-// LFU eviction.
+// Cache is a non-blocking eventually consistent LFU cache.
 //
 // All methods except Close are safe to use concurrently.
 type Cache struct {
-	records       sync.Map
-	wg            sync.WaitGroup
-	onceLoop      sync.Once
-	pool          sync.Pool
-	mu            sync.RWMutex
-	cond          *sync.Cond
-	listMu        sync.Mutex
-	list          *list.List
-	evictRequests chan struct{}
-	quit          chan struct{}
-	afterEvict    EvictionCallback
-	capacity      uint32
-	backpressure  uint32
-	size          uint32
+	records      sync.Map
+	pool         sync.Pool
+	wg           sync.WaitGroup
+	capacity     uint32
+	backpressure uint32
+	size         uint32
+	list         *lfuRing
+	afterEvict   EvictionCallback
+	quit         chan struct{}
 }
 
 // Builder builds a cache.
@@ -60,7 +59,9 @@ func New() Builder {
 	return func(c *Cache) {
 		c.pool = sync.Pool{
 			New: func() interface{} {
-				return &record{}
+				r := ring.New(1)
+				r.Value = &record{}
+				return r
 			},
 		}
 		c.quit = make(chan struct{})
@@ -76,23 +77,18 @@ func (build Builder) WithEvictionCallback(cb EvictionCallback) Builder {
 	}
 }
 
-// WithCapacity configures the cache with specified size limit.
+// WithCapacity configures the cache with specified capacity.
 // If cache exceeds the limit, the least frequently
-// used records are evicted.
+// will begin to be evicted.
 //
-// New records are inserted as the most frequently used
-// to reduce premature eviction of new but unused records.
-//
-// The maximum overflow at any given moment is the number of concurrent users.
-// To limit overflow, limit concurrency.
-func (build Builder) WithCapacity(size uint32) Builder {
+// New records are inserted as the most frequently used to
+// reduce premature eviction of new but unused records.
+func (build Builder) WithCapacity(capacity uint32) Builder {
 	return func(c *Cache) {
 		build(c)
 
-		c.cond = sync.NewCond(&c.mu)
-		c.list = list.New()
-		c.evictRequests = make(chan struct{}, 1)
-		c.capacity = size
+		c.list = newLFUList(capacity)
+		c.capacity = capacity
 	}
 }
 
@@ -100,7 +96,25 @@ func (build Builder) WithCapacity(size uint32) Builder {
 func (build Builder) Build() *Cache {
 	c := &Cache{}
 	build(c)
-
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		ticker := time.NewTicker(SyncInterval)
+		defer ticker.Stop()
+		for {
+			var nowNano int64
+			select {
+			case <-c.quit:
+				return
+			case now := <-ticker.C:
+				nowNano = now.UnixNano()
+			}
+			c.processRecords(nowNano)
+			if c.capacity > 0 {
+				c.evictLFU()
+			}
+		}
+	}()
 	return c
 }
 
@@ -111,14 +125,18 @@ func (build Builder) Build() *Cache {
 // or a memory leak will occur.
 func (c *Cache) Get(key interface{}) (value interface{}, closer io.Closer, exists bool) {
 	for {
-		rec, ok := c.records.Load(key)
+		old, ok := c.records.Load(key)
 		if !ok {
 			return nil, nil, false
 		}
-		r := rec.(*record)
-		if value, ok := r.load(); ok {
-			return value, r, true
+		oldring := old.(*ring.Ring)
+		oldrec := oldring.Value.(*record)
+		oldrec.mu.RLock()
+		defer oldrec.mu.RUnlock()
+		if oldrec.valid() {
+			return oldrec.load(), oldrec, true
 		}
+		c.delete(key, oldring)
 	}
 }
 
@@ -127,99 +145,87 @@ func (c *Cache) Get(key interface{}) (value interface{}, closer io.Closer, exist
 //
 // When the returned value is not used anymore, the caller MUST call closer.Close()
 // or a memory leak will occur.
-//
-// If the cache has a size limit and it is exceeded, it may block
-// until the overflow is evicted.
 func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (value interface{}, closer io.Closer, err error) {
-	c.doGuarded(func() {
-		var r *record
-		for {
-			r = c.pool.Get().(*record)
-			r.mu.Lock()
-			old, loaded := c.records.LoadOrStore(key, r)
-			if !loaded {
-				defer r.mu.Unlock()
-				break
+	if c.capacity > 0 {
+		bp := c.acquire()
+		defer c.release(bp)
+	}
+	for {
+		newring := c.pool.Get().(*ring.Ring)
+		newrec := newring.Value.(*record)
+		newrec.mu.Lock()
+		old, loaded := c.records.LoadOrStore(key, newring)
+		if !loaded {
+			defer newrec.mu.Unlock()
+			value, err := f()
+			if err != nil {
+				newrec.softDeleted = true
+				c.delete(key, newring)
+				return nil, nil, err
 			}
-			r.mu.Unlock()
-			c.pool.Put(r)
-
-			val, loaded := old.(*record).load()
-			if loaded {
-				value = val
-				closer = old.(*record)
-				return
-			}
+			newrec.wg.Add(1)
+			newrec.hits = 1
+			c.initRecord(newring, key, value, ttl)
+			atomic.AddUint32(&c.size, 1)
+			return value, newrec, nil
 		}
+		newrec.mu.Unlock()
+		c.pool.Put(newring)
 
-		value, err = f()
-		if err != nil {
-			c.records.Delete(key)
-			r.delete()
-			return
+		oldring := old.(*ring.Ring)
+		if oldring == newring {
+			panic("evcache: must have loaded a different ring")
 		}
-		closer = r
-
-		r.wg.Add(1)
-		r.hits = 1
-		c.initRecord(r, value, ttl)
-		atomic.AddUint32(&c.size, 1)
-	})
-
-	return value, closer, err
+		oldrec := oldring.Value.(*record)
+		oldrec.mu.RLock()
+		if oldrec.valid() {
+			defer oldrec.mu.RUnlock()
+			return oldrec.load(), oldrec, nil
+		}
+		c.delete(key, oldring)
+		oldrec.mu.RUnlock()
+	}
 }
 
-// Set the value for a key.
-//
-// If the cache has a size limit and it is exceeded, it may block
-// until the overflow is evicted.
-func (c *Cache) Set(key, value interface{}, ttl time.Duration) (replaced bool) {
-	c.doGuarded(func() {
-		var r *record
-		for {
-			r = c.pool.Get().(*record)
-			r.mu.Lock()
-			old, loaded := c.records.LoadOrStore(key, r)
-			if !loaded {
-				defer r.mu.Unlock()
-				break
-			}
-			if c.swap(key, old.(*record), r) {
-				replaced = true
-				defer r.mu.Unlock()
-				break
-			}
-			r.mu.Unlock()
-			c.pool.Put(r)
-		}
-
-		c.initRecord(r, value, ttl)
-		if !replaced {
+// Set the value for a key with a timeout.
+func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
+	if c.capacity > 0 {
+		bp := c.acquire()
+		defer c.release(bp)
+	}
+	for {
+		newring := c.pool.Get().(*ring.Ring)
+		newrec := newring.Value.(*record)
+		newrec.mu.Lock()
+		old, loaded := c.records.LoadOrStore(key, newring)
+		if !loaded {
+			defer newrec.mu.Unlock()
+			c.initRecord(newring, key, value, ttl)
 			atomic.AddUint32(&c.size, 1)
+			return
 		}
-	})
+		newrec.mu.Unlock()
+		c.pool.Put(newring)
 
-	return replaced
+		oldring := old.(*ring.Ring)
+		oldrec := oldring.Value.(*record)
+		oldrec.mu.Lock()
+		c.delete(key, old.(*ring.Ring))
+		oldrec.mu.Unlock()
+	}
 }
 
 // Evict a key and return its value if it exists.
 func (c *Cache) Evict(key interface{}) (value interface{}, evicted bool) {
-	rec, loaded := c.records.LoadAndDelete(key)
+	value, loaded := c.records.LoadAndDelete(key)
 	if !loaded {
 		return nil, false
 	}
-
-	r := rec.(*record)
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.isDeleted() {
-		return nil, false
-	}
-	r.delete()
-	c.runAfterEvict(key, r)
-	atomic.AddUint32(&c.size, ^uint32(0))
-
-	return r.value, true
+	r := value.(*ring.Ring)
+	rec := r.Value.(*record)
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	return c.finalizeDelete(key, r)
 }
 
 // Flush evicts all keys from the cache.
@@ -241,8 +247,6 @@ func (c *Cache) Len() int {
 // It is not safe to close the cache
 // while in use.
 func (c *Cache) Close() error {
-	c.ensureEviction()
-	c.quit <- struct{}{}
 	close(c.quit)
 	c.wg.Wait()
 	c.records.Range(func(key, _ interface{}) bool {
@@ -250,192 +254,122 @@ func (c *Cache) Close() error {
 		return true
 	})
 	c.wg.Wait()
-
 	return nil
 }
 
-func (c *Cache) swap(key interface{}, old, new *record) (swapped bool) {
-	old.mu.Lock()
-	defer old.mu.Unlock()
-	if old.isDeleted() {
-		return false
-	}
-	c.records.Store(key, new)
-	old.delete()
-	c.runAfterEvict(key, old)
-	return true
+func (c *Cache) acquire() uint32 {
+	return atomic.AddUint32(&c.backpressure, 1)
 }
 
-func (c *Cache) initRecord(r *record, value interface{}, ttl time.Duration) {
-	r.value = value
-	if ttl > 0 {
-		r.expires = time.Now().Add(ttl).UnixNano()
-		c.ensureEviction()
+func (c *Cache) release(bp uint32) {
+	if c.wouldOverflow(bp) {
+		c.evictLFU()
 	}
+	atomic.AddUint32(&c.backpressure, ^uint32(0))
 }
 
-func (c *Cache) wouldOverflow(size, bp uint32) bool {
-	if size > c.capacity && size-c.capacity > bp {
-		panic(fmt.Sprintf("evcache: invariant failed: overflow cannot exceed backpressure, overflow %d, bp: %d", size-c.capacity, bp))
-	}
-	return size+bp > c.capacity
+func (c *Cache) wouldOverflow(bp uint32) bool {
+	size := atomic.LoadUint32(&c.size)
+	return size > c.capacity && size-c.capacity > bp
 }
 
-func (c *Cache) triggerEviction() {
-	select {
-	case c.evictRequests <- struct{}{}:
-	default:
-		// Hitchhiked another request.
-	}
-}
-
-func (c *Cache) doGuarded(f func()) {
-	if c.capacity > 0 {
-		// It is important for size to be loaded
-		// before incrementing backpressure or a
-		// race condition will occur and fail
-		// the overflow <= backpressure invariant.
-		size := atomic.LoadUint32(&c.size)
-		bp := atomic.AddUint32(&c.backpressure, 1)
-		defer atomic.AddUint32(&c.backpressure, ^uint32(0))
-		if !c.wouldOverflow(size, bp) {
-			// Isolate ourselves from the overflowed callers.
-			c.mu.RLock()
-			defer c.mu.RUnlock()
-		} else {
-			c.ensureEviction()
-			c.mu.Lock()
-			defer c.mu.Unlock()
-			// Cannot decrease backpressure until overflow cleared.
-			defer c.cond.Wait()
-			defer c.triggerEviction()
-			// Trigger an eviction or hitchhike onto an existing request.
-			// Cannot continue until overflow cleared.
-			c.triggerEviction()
-			c.cond.Wait()
+func (c *Cache) delete(key interface{}, r *ring.Ring) (deleted uint32) {
+	if _, ok := c.finalizeDelete(key, r); ok {
+		deleted = 1
+		r2, loaded := c.records.LoadAndDelete(key)
+		if loaded && r2.(*ring.Ring) != r {
+			// Oops, deleted another record.
+			r2 := r2.(*ring.Ring)
+			rec2 := r2.Value.(*record)
+			c.wg.Add(1)
+			go func() {
+				defer c.wg.Done()
+				rec2.mu.Lock()
+				defer rec2.mu.Unlock()
+				c.finalizeDelete(key, r2)
+			}()
+			deleted = 2
 		}
 	}
-	f()
+	return deleted
 }
 
-func (c *Cache) ensureEviction() {
-	c.onceLoop.Do(func() {
+func (c *Cache) finalizeDelete(key interface{}, r *ring.Ring) (value interface{}, finalized bool) {
+	rec := r.Value.(*record)
+	if rec.zombie {
+		return nil, false
+	}
+	rec.once.Do(func() {
+		value = rec.value
+		finalized = true
+		if !rec.softDeleted {
+			atomic.AddUint32(&c.size, ^uint32(0))
+		}
+		if c.capacity > 0 {
+			c.list.remove(r)
+		}
+		value := rec.value
+		c.wg.Add(1)
 		go func() {
-			ticker := time.NewTicker(EvictionInterval)
-			defer ticker.Stop()
-			for {
-				var nowNano int64
-				select {
-				case <-c.quit:
-					return
-				case now := <-ticker.C:
-					nowNano = now.UnixNano()
-				case <-c.evictRequests:
-					nowNano = time.Now().UnixNano()
-				}
-				c.processRecords(nowNano)
-				if c.capacity > 0 {
-					c.evictLFU()
-				}
+			defer c.wg.Done()
+			rec.mu.Lock()
+			rec.zombie = true
+			rec.mu.Unlock()
+			rec.wg.Wait()
+			if c.afterEvict != nil {
+				c.afterEvict(key, value)
 			}
 		}()
 	})
+	return value, finalized
+}
+
+func (c *Cache) initRecord(r *ring.Ring, key, value interface{}, ttl time.Duration) {
+	rec := r.Value.(*record)
+	rec.value = value
+	if ttl > 0 {
+		rec.expires = time.Now().Add(ttl).UnixNano()
+	}
+	if c.capacity > 0 {
+		c.list.insert(r)
+	}
+}
+
+func (c *Cache) evictLFU() {
+	for {
+		rec := c.list.pop()
+		if rec == nil {
+			break
+		}
+		rec.mu.Lock()
+		if rec.valid() {
+			rec.softDeleted = true
+			atomic.AddUint32(&c.size, ^uint32(0))
+		}
+		rec.mu.Unlock()
+	}
 }
 
 func (c *Cache) processRecords(now int64) {
 	c.records.Range(func(key, value interface{}) bool {
-		r := value.(*record)
-		r.mu.RLock()
-		defer r.mu.RUnlock()
-		if r.isDeleted() {
+		r := value.(*ring.Ring)
+		rec := r.Value.(*record)
+		rec.mu.RLock()
+		defer rec.mu.RUnlock()
+		if !rec.valid() {
+			c.delete(key, r)
 			return true
 		}
-		if r.expires > 0 && r.expires < now {
-			c.expireRecord(key, r)
+		if rec.expires > 0 && rec.expires < now {
+			c.delete(key, r)
 			return true
 		}
 		if c.capacity == 0 {
 			return true
 		}
-		hits := atomic.SwapUint32(&r.hits, 0)
-		// The elem does not need moving.
-		if hits == 0 && r.elem != nil {
-			return true
-		}
-		c.listMu.Lock()
-		defer c.listMu.Unlock()
-		if r.elem == nil {
-			r.elem = c.list.PushBack(key)
-		} else if hits > 0 && c.list.Len() > 1 {
-			// Update the record's position in the list
-			// based on hits delta.
-			target := r.elem
-			for i := uint32(0); i < hits; i++ {
-				if next := target.Next(); next != nil {
-					target = next
-				} else {
-					break
-				}
-			}
-			if target != r.elem {
-				c.list.MoveAfter(r.elem, target)
-			}
+		if hits := atomic.SwapUint32(&rec.hits, 0); hits > 0 {
+			c.list.promote(r, hits)
 		}
 		return true
 	})
-}
-
-func (c *Cache) expireRecord(key interface{}, r *record) {
-	rec, loaded := c.records.LoadAndDelete(key)
-	if !loaded {
-		return
-	}
-	if r != rec.(*record) {
-		panic("evcache: invariant failed: record is not the same")
-	}
-	r.delete()
-	go func() {
-		// Lock to wait for readers to finish reading r.deleted
-		// or adding to waitgroup.
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		c.runAfterEvict(key, r)
-		atomic.AddUint32(&c.size, ^uint32(0))
-	}()
-}
-
-func (c *Cache) runAfterEvict(key interface{}, r *record) {
-	if r.elem != nil {
-		c.listMu.Lock()
-		c.list.Remove(r.elem)
-		c.listMu.Unlock()
-	}
-	if c.afterEvict != nil {
-		c.wg.Add(1)
-		go func() {
-			defer c.wg.Done()
-			r.wg.Wait()
-			c.afterEvict(key, r.value)
-		}()
-	}
-}
-
-func (c *Cache) evictLFU() {
-	pop := func() (key interface{}, success bool) {
-		c.listMu.Lock()
-		defer c.listMu.Unlock()
-		if c.list.Len() > int(c.capacity) {
-			return c.list.Remove(c.list.Front()), true
-		}
-		return nil, false
-	}
-	for {
-		key, ok := pop()
-		if !ok {
-			c.cond.Signal()
-			break
-		}
-		c.Evict(key)
-		c.cond.Signal()
-	}
 }
