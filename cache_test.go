@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -455,68 +456,68 @@ var _ = Describe("overflow when setting values", func() {
 	)
 })
 
-//var _ = FDescribe("eventual overflow eviction order", func() {
-//var (
-//n           = 100
-//key         uint64
-//evictedKeys chan uint64
-//c           *evcache.Cache
-//)
+var _ = FDescribe("eventual overflow eviction order", func() {
+	var (
+		n           = 100
+		key         uint64
+		evictedKeys chan uint64
+		c           *evcache.Cache
+	)
 
-//BeforeEach(func() {
-//// TODO cap is n
-//evictedKeys = make(chan uint64, 10000)
-//key = 0
-//c = evcache.New().
-//WithEvictionCallback(func(key, _ interface{}) {
-//defer GinkgoRecover()
-//evictedKeys <- key.(uint64)
-//}).
-//WithCapacity(uint32(n)).
-//Build()
-//})
+	BeforeEach(func() {
+		// TODO cap is n
+		evictedKeys = make(chan uint64, 10000)
+		key = 0
+		c = evcache.New().
+			WithEvictionCallback(func(key, _ interface{}) {
+				defer GinkgoRecover()
+				evictedKeys <- key.(uint64)
+			}).
+			WithCapacity(uint32(n)).
+			Build()
+	})
 
-//AfterEach(func() {
-//c.Close()
-//Expect(c.Len()).To(BeZero())
-//})
+	AfterEach(func() {
+		c.Close()
+		Expect(c.Len()).To(BeZero())
+	})
 
-//When("records have different popularity", func() {
-//BeforeEach(func() {
-//for i := 1; i <= n; i++ {
-//k := atomic.AddUint64(&key, 1)
-//c.Set(k, nil, 0)
-//// Make its hit count reflect the key
-//// in reverse order.
-//for j := 1; j <= n-i; j++ {
-//_, closer, exists := c.Get(k)
-//Expect(exists).To(BeTrue())
-//closer.Close()
-//}
-//// time.Sleep(evcache.EvictionInterval)
-//}
+	When("records have different popularity", func() {
+		BeforeEach(func() {
+			for i := 1; i <= n; i++ {
+				k := atomic.AddUint64(&key, 1)
+				c.Set(k, nil, 0)
+				// Make its hit count reflect the key
+				// in reverse order.
+				for j := 1; j <= n-i; j++ {
+					_, closer, exists := c.Get(k)
+					Expect(exists).To(BeTrue())
+					closer.Close()
+				}
+				// time.Sleep(evcache.EvictionInterval)
+			}
 
-//// time.Sleep(time.Second)
-//})
+			// time.Sleep(time.Second)
+		})
 
-//Specify("the eviction order is sorted by key hit count", func() {
-//var keys []int
-//for i := 0; i < n; i++ {
-//// Overflow the cache and catch the evicted keys.
-//k := atomic.AddUint64(&key, 1)
-//c.Set(k, nil, 0)
-//keys = append(keys, int(<-evictedKeys))
-//fmt.Println(i)
-//}
+		Specify("the eviction order is sorted by key hit count", func() {
+			var keys []int
+			for i := 0; i < n; i++ {
+				// Overflow the cache and catch the evicted keys.
+				k := atomic.AddUint64(&key, 1)
+				c.Set(k, nil, 0)
+				keys = append(keys, int(<-evictedKeys))
+				fmt.Println(i)
+			}
 
-//reverseSorted := sort.IsSorted(sort.Reverse(sort.IntSlice(keys)))
-//// if !reverseSorted {
-////spew.Dump(keys)
-////}
-//// TODO This failed
-//_ = reverseSorted
-//// spew.Dump(keys)
-//Expect(reverseSorted).To(BeTrue())
-//})
-//})
-//})
+			reverseSorted := sort.IsSorted(sort.Reverse(sort.IntSlice(keys)))
+			// if !reverseSorted {
+			//spew.Dump(keys)
+			//}
+			// TODO This failed
+			_ = reverseSorted
+			// spew.Dump(keys)
+			Expect(reverseSorted).To(BeTrue())
+		})
+	})
+})

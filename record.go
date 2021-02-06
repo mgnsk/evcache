@@ -5,15 +5,19 @@ import (
 	"sync/atomic"
 )
 
+const (
+	stateAlive = iota
+	stateDeleted
+)
+
 type record struct {
-	mu          sync.RWMutex
-	value       interface{}
-	once        sync.Once
-	wg          sync.WaitGroup
-	zombie      bool
-	softDeleted bool
-	hits        uint32
-	expires     int64
+	mu      sync.RWMutex
+	value   interface{}
+	once    sync.Once
+	wg      sync.WaitGroup
+	state   uint32
+	hits    uint32
+	expires int64
 }
 
 func (r *record) Close() error {
@@ -28,5 +32,9 @@ func (r *record) load() interface{} {
 }
 
 func (r *record) valid() bool {
-	return !r.zombie && !r.softDeleted
+	return atomic.LoadUint32(&r.state) == stateAlive
+}
+
+func (r *record) softDelete() bool {
+	return atomic.CompareAndSwapUint32(&r.state, stateAlive, stateDeleted)
 }

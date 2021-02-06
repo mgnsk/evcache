@@ -132,11 +132,12 @@ func (c *Cache) Get(key interface{}) (value interface{}, closer io.Closer, exist
 		oldring := old.(*ring.Ring)
 		oldrec := oldring.Value.(*record)
 		oldrec.mu.RLock()
-		defer oldrec.mu.RUnlock()
 		if oldrec.valid() {
+			defer oldrec.mu.RUnlock()
 			return oldrec.load(), oldrec, true
 		}
-		c.delete(key, oldring)
+		oldrec.mu.RUnlock()
+		c.evict(key)
 	}
 }
 
@@ -159,8 +160,7 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 			defer newrec.mu.Unlock()
 			value, err := f()
 			if err != nil {
-				newrec.softDeleted = true
-				c.delete(key, newring)
+				newrec.softDelete()
 				return nil, nil, err
 			}
 			newrec.wg.Add(1)
@@ -182,8 +182,8 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 			defer oldrec.mu.RUnlock()
 			return oldrec.load(), oldrec, nil
 		}
-		c.delete(key, oldring)
 		oldrec.mu.RUnlock()
+		c.evict(key)
 	}
 }
 
@@ -197,7 +197,7 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 		newring := c.pool.Get().(*ring.Ring)
 		newrec := newring.Value.(*record)
 		newrec.mu.Lock()
-		old, loaded := c.records.LoadOrStore(key, newring)
+		_, loaded := c.records.LoadOrStore(key, newring)
 		if !loaded {
 			defer newrec.mu.Unlock()
 			c.initRecord(newring, key, value, ttl)
@@ -206,26 +206,13 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 		}
 		newrec.mu.Unlock()
 		c.pool.Put(newring)
-
-		oldring := old.(*ring.Ring)
-		oldrec := oldring.Value.(*record)
-		oldrec.mu.Lock()
-		c.delete(key, old.(*ring.Ring))
-		oldrec.mu.Unlock()
+		c.evict(key)
 	}
 }
 
 // Evict a key and return its value if it exists.
 func (c *Cache) Evict(key interface{}) (value interface{}, evicted bool) {
-	value, loaded := c.records.LoadAndDelete(key)
-	if !loaded {
-		return nil, false
-	}
-	r := value.(*ring.Ring)
-	rec := r.Value.(*record)
-	rec.mu.Lock()
-	defer rec.mu.Unlock()
-	return c.finalizeDelete(key, r)
+	return c.evict(key)
 }
 
 // Flush evicts all keys from the cache.
@@ -273,55 +260,35 @@ func (c *Cache) wouldOverflow(bp uint32) bool {
 	return size > c.capacity && size-c.capacity > bp
 }
 
-func (c *Cache) delete(key interface{}, r *ring.Ring) (deleted uint32) {
-	if _, ok := c.finalizeDelete(key, r); ok {
-		deleted = 1
-		r2, loaded := c.records.LoadAndDelete(key)
-		if loaded && r2.(*ring.Ring) != r {
-			// Oops, deleted another record.
-			r2 := r2.(*ring.Ring)
-			rec2 := r2.Value.(*record)
-			c.wg.Add(1)
-			go func() {
-				defer c.wg.Done()
-				rec2.mu.Lock()
-				defer rec2.mu.Unlock()
-				c.finalizeDelete(key, r2)
-			}()
-			deleted = 2
-		}
-	}
-	return deleted
-}
-
-func (c *Cache) finalizeDelete(key interface{}, r *ring.Ring) (value interface{}, finalized bool) {
-	rec := r.Value.(*record)
-	if rec.zombie {
+func (c *Cache) evict(key interface{}) (value interface{}, evicted bool) {
+	value, loaded := c.records.LoadAndDelete(key)
+	if !loaded {
 		return nil, false
 	}
+	r := value.(*ring.Ring)
+	rec := r.Value.(*record)
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
 	rec.once.Do(func() {
 		value = rec.value
-		finalized = true
-		if !rec.softDeleted {
+		evicted = true
+		if rec.softDelete() {
 			atomic.AddUint32(&c.size, ^uint32(0))
+			if c.capacity > 0 {
+				c.list.remove(r)
+			}
 		}
-		if c.capacity > 0 {
-			c.list.remove(r)
-		}
-		value := rec.value
 		c.wg.Add(1)
 		go func() {
 			defer c.wg.Done()
-			rec.mu.Lock()
-			rec.zombie = true
-			rec.mu.Unlock()
 			rec.wg.Wait()
 			if c.afterEvict != nil {
 				c.afterEvict(key, value)
 			}
 		}()
 	})
-	return value, finalized
+
+	return value, evicted
 }
 
 func (c *Cache) initRecord(r *ring.Ring, key, value interface{}, ttl time.Duration) {
@@ -341,12 +308,9 @@ func (c *Cache) evictLFU() {
 		if rec == nil {
 			break
 		}
-		rec.mu.Lock()
-		if rec.valid() {
-			rec.softDeleted = true
+		if rec.softDelete() {
 			atomic.AddUint32(&c.size, ^uint32(0))
 		}
-		rec.mu.Unlock()
 	}
 }
 
@@ -356,12 +320,12 @@ func (c *Cache) processRecords(now int64) {
 		rec := r.Value.(*record)
 		rec.mu.RLock()
 		defer rec.mu.RUnlock()
-		if !rec.valid() {
-			c.delete(key, r)
-			return true
-		}
-		if rec.expires > 0 && rec.expires < now {
-			c.delete(key, r)
+		if !rec.valid() || rec.expires > 0 && rec.expires < now {
+			c.wg.Add(1)
+			go func() {
+				defer c.wg.Done()
+				c.evict(key)
+			}()
 			return true
 		}
 		if c.capacity == 0 {
