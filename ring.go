@@ -26,25 +26,25 @@ func (l *lfuRing) Len() int {
 	return int(atomic.LoadUint32(&l.size))
 }
 
-// Push inserts a key as most frequently used.
-// If capacity is exceeded, the least frequently
-// used key is returned.
-func (l *lfuRing) Push(key interface{}, r *ring.Ring) (overflowed interface{}) {
-	r.Value = key
+// Push inserts a key as most frequently used. If capacity is exceeded,
+// the least frequently used key is returned.
+func (l *lfuRing) Push(key interface{}, r *ring.Ring) (lfu interface{}) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	r.Value = key
 	if l.cursor != nil {
 		l.cursor.Link(r)
 	}
 	l.cursor = r
 	size := atomic.AddUint32(&l.size, 1)
 	if l.capacity > 0 && size > l.capacity {
-		lfu := l.cursor.Next()
-		return lfu.Value
+		lfuring := l.cursor.Next()
+		return lfuring.Value
 	}
 	return nil
 }
 
+// Remove an existing element.
 func (l *lfuRing) Remove(r *ring.Ring) (key interface{}) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -69,13 +69,14 @@ func (l *lfuRing) Promote(r *ring.Ring, hits uint32) {
 		}
 		target = next
 	}
+
 	if r.Prev().Unlink(1) != r {
 		panic("evcache: invalid ring")
 	}
+	target.Link(r)
 	if target == l.cursor {
 		l.cursor = r
 	}
-	target.Link(r)
 }
 
 func (l *lfuRing) unlink(r *ring.Ring) (key interface{}) {

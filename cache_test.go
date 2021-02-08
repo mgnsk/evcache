@@ -29,7 +29,7 @@ var _ = Describe("fetching values", func() {
 	BeforeEach(func() {
 		c = evcache.New().Build()
 
-		value, closer, err := c.LoadOrStore("key", 0, func() (interface{}, error) {
+		value, closer, err := c.Fetch("key", 0, func() (interface{}, error) {
 			return "value", nil
 		})
 		Expect(err).To(BeNil())
@@ -45,7 +45,9 @@ var _ = Describe("fetching values", func() {
 	})
 
 	Specify("value is returned", func() {
-		value, closer, err := c.LoadOrStore("key", 0, func() (interface{}, error) {
+		fmt.Println(1)
+
+		value, closer, err := c.Fetch("key", 0, func() (interface{}, error) {
 			panic("unexpected fetch")
 		})
 		Expect(err).To(BeNil())
@@ -70,8 +72,9 @@ var _ = Describe("deleting values", func() {
 
 	When("value exists", func() {
 		Specify("it is evicted", func() {
+			fmt.Println(2)
 			// Stores are synchronous.
-			_, closer, _ := c.LoadOrStore("key", 0, func() (interface{}, error) {
+			_, closer, _ := c.Fetch("key", 0, func() (interface{}, error) {
 				return "value", nil
 			})
 			closer.Close()
@@ -100,7 +103,8 @@ var _ = Describe("flushing the cache", func() {
 
 	When("the cache is flushed", func() {
 		Specify("all records are evicted", func() {
-			_, closer, _ := c.LoadOrStore("key", 0, func() (interface{}, error) {
+			fmt.Println(3)
+			_, closer, _ := c.Fetch("key", 0, func() (interface{}, error) {
 				return "value", nil
 			})
 			closer.Close()
@@ -137,8 +141,9 @@ var _ = Describe("autoexpiry", func() {
 	})
 
 	Specify("value with non-zero TTL will be evicted", func() {
+		fmt.Println(4)
 		ttl := 4 * evcache.SyncInterval
-		_, closer, _ := c.LoadOrStore("key", ttl, func() (interface{}, error) {
+		_, closer, _ := c.Fetch("key", ttl, func() (interface{}, error) {
 			return "value", nil
 		})
 		closer.Close()
@@ -178,15 +183,18 @@ var _ = Describe("eviction callback", func() {
 	})
 
 	Specify("callback waits for closers to be closed", func() {
+		fmt.Println(5)
 		key := uint64(0)
 
 		// Fetch a key and keep it alive by not closing the closer.
-		_, closer, _ := c.LoadOrStore("key", time.Nanosecond, func() (interface{}, error) {
+		_, closer, _ := c.Fetch("key", time.Nanosecond, func() (interface{}, error) {
+			// time.Sleep(100 * time.Millisecond)
 			return atomic.AddUint64(&key, 1), nil
 		})
 
 		Eventually(func() uint64 {
-			value, closer, _ := c.LoadOrStore("key", 10*time.Millisecond, func() (interface{}, error) {
+			value, closer, _ := c.Fetch("key", 10*time.Millisecond, func() (interface{}, error) {
+				time.Sleep(20 * time.Microsecond)
 				return atomic.AddUint64(&key, 1), nil
 			})
 			Expect(closer).NotTo(BeNil())
@@ -221,6 +229,7 @@ var _ = Describe("Fetch fails with an error", func() {
 	})
 
 	Specify("no records are cached", func() {
+		fmt.Println(6)
 		wg := sync.WaitGroup{}
 		errFetch := errors.New("error creating value")
 
@@ -229,7 +238,7 @@ var _ = Describe("Fetch fails with an error", func() {
 			go func() {
 				defer wg.Done()
 				defer GinkgoRecover()
-				val, closer, err := c.LoadOrStore("key", 0, func() (interface{}, error) {
+				val, closer, err := c.Fetch("key", 0, func() (interface{}, error) {
 					return nil, errFetch
 				})
 				Expect(errors.Is(err, errFetch)).To(BeTrue())
@@ -264,8 +273,9 @@ var _ = Describe("overflow when setting values", func() {
 
 	When("Set causes an overflow", func() {
 		Specify("eventually overflowed records are evicted", func() {
+			fmt.Println(7)
 			for i := 0; i < n+overflow; i++ {
-				_, closer, _ := c.LoadOrStore(i, 0, func() (interface{}, error) {
+				_, closer, _ := c.Fetch(i, 0, func() (interface{}, error) {
 					return nil, nil
 				})
 				closer.Close()
@@ -282,8 +292,9 @@ var _ = Describe("overflow when setting values", func() {
 
 	When("Fetch causes an overflow", func() {
 		Specify("eventually overflowed records are evicted", func() {
+			fmt.Println(8)
 			for i := 0; i < n+overflow; i++ {
-				_, closer, _ := c.LoadOrStore(i, 0, func() (interface{}, error) {
+				_, closer, _ := c.Fetch(i, 0, func() (interface{}, error) {
 					return nil, nil
 				})
 				closer.Close()
@@ -345,7 +356,7 @@ var _ = Describe("overflow when setting values", func() {
 		Entry(
 			"Fetch",
 			func(i int) {
-				value, closer, err := c.LoadOrStore(i, 0, func() (interface{}, error) {
+				value, closer, err := c.Fetch(i, 0, func() (interface{}, error) {
 					return "value", nil
 				})
 				Expect(err).To(BeNil())
@@ -358,14 +369,14 @@ var _ = Describe("overflow when setting values", func() {
 
 var _ = Describe("eventual overflow eviction order", func() {
 	var (
-		n           = 100
+		n           = 10
 		key         uint64
 		evictedKeys chan uint64
 		c           *evcache.Cache
 	)
 
 	BeforeEach(func() {
-		evictedKeys = make(chan uint64, n)
+		evictedKeys = make(chan uint64, 2<<16)
 		key = 0
 		c = evcache.New().
 			WithEvictionCallback(func(key, _ interface{}) {
@@ -382,46 +393,58 @@ var _ = Describe("eventual overflow eviction order", func() {
 	})
 
 	When("records have different popularity", func() {
-		BeforeEach(func() {
+		warmup := func() {
 			for i := 1; i <= n; i++ {
 				k := atomic.AddUint64(&key, 1)
-				_, closer, _ := c.LoadOrStore(k, 0, func() (interface{}, error) {
+				_, closer, _ := c.Fetch(k, 0, func() (interface{}, error) {
 					return nil, nil
 				})
+				time.Sleep(2 * evcache.SyncInterval)
 				closer.Close()
 				// Make its hit count reflect the key
 				// in reverse order.
 				for j := 1; j <= n-i; j++ {
 					_, closer, exists := c.Load(k)
 					Expect(exists).To(BeTrue())
+					time.Sleep(2 * evcache.SyncInterval)
 					closer.Close()
 				}
 			}
-		})
+		}
 
-		Specify("the eviction order is sorted by key hit count", func() {
-			Skip("TODO")
-			var keys []int
+		overflow := func() (keys []int) {
 			for i := 0; i < n; i++ {
 				// Overflow the cache and catch the evicted keys.
 				k := atomic.AddUint64(&key, 1)
-				_, closer, _ := c.LoadOrStore(k, 0, func() (interface{}, error) {
+				_, closer, _ := c.Fetch(k, 0, func() (interface{}, error) {
 					return nil, nil
 				})
 				closer.Close()
 				evictedKey := int(<-evictedKeys)
-				fmt.Println(evictedKey)
 				keys = append(keys, evictedKey)
 			}
+			return keys
+		}
 
-			reverseSorted := sort.IsSorted(sort.Reverse(sort.IntSlice(keys)))
-			// if !reverseSorted {
+		Specify("the eviction order is almost sorted by key hit count", func() {
+			Skip("TODO")
+			fmt.Println(9)
+			warmup()
+			keys := overflow()
 			spew.Dump(keys)
-			//}
-			// TODO This failed
-			_ = reverseSorted
-			// spew.Dump(keys)
-			Expect(reverseSorted).To(BeTrue())
+			sortedness := calcSortedness(sort.Reverse(sort.IntSlice(keys)))
+			spew.Dump(sortedness)
 		})
 	})
 })
+
+func calcSortedness(data sort.Interface) float64 {
+	invalid := 0
+	n := data.Len()
+	for i := n - 1; i > 0; i-- {
+		if data.Less(i, i-1) {
+			invalid++
+		}
+	}
+	return 1.0 - float64(invalid)/float64(n)
+}

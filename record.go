@@ -50,7 +50,7 @@ func (r *record) init(value interface{}, ttl time.Duration) {
 	atomic.AddUint32(&r.hits, 1)
 }
 
-func (r *record) finish() {
+func (r *record) finalize() {
 	r.value = nil
 	r.state = stateZombie
 	r.hits = 0

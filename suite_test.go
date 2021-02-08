@@ -27,7 +27,7 @@ func BenchmarkLFUContention(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_, closer, _ := c.LoadOrStore(atomic.AddUint64(&key, 1), 0, func() (interface{}, error) {
+			_, closer, _ := c.Fetch(atomic.AddUint64(&key, 1), 0, func() (interface{}, error) {
 				return 0, nil
 			})
 			closer.Close()

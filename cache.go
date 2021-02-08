@@ -10,11 +10,9 @@ import (
 
 // SyncInterval is the interval for background loop.
 //
-// It is the interval for which the LFU order lags behind
-// hit statistics of each record which is used to
-// relatively move the records.
-//
-// Insert and delete are immediate.
+// If records are created faster than SyncInterval and
+// cache overflows, the LFU eviction order becomes
+// the reverse order of insertion order.
 var SyncInterval = time.Second
 
 // FetchCallback is called when *Cache.Fetch has a miss
@@ -31,7 +29,7 @@ type FetchCallback func() (interface{}, error)
 // are closed.
 type EvictionCallback func(key, value interface{})
 
-// Cache is a non-blocking eventually consistent LFU cache.
+// Cache is an eventually consistent LFU cache.
 //
 // All methods except Close are safe to use concurrently.
 type Cache struct {
@@ -94,16 +92,7 @@ func (build Builder) Build() *Cache {
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
-		ticker := time.NewTicker(SyncInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-c.quit:
-				return
-			case now := <-ticker.C:
-				c.processRecords(now.UnixNano())
-			}
-		}
+		c.runLoop()
 	}()
 	return c
 }
@@ -153,12 +142,12 @@ func (c *Cache) Load(key interface{}) (value interface{}, closer io.Closer, exis
 	}
 }
 
-// LoadOrStore attempts to get or set the value and calls f on a miss to receive the new value.
+// Fetch attempts to get or set the value and calls f on a miss to receive the new value.
 // If f returns an error, no value is cached and the error is returned back to caller.
 //
 // When the returned value is not used anymore, the caller MUST call closer.Close()
 // or a memory leak will occur.
-func (c *Cache) LoadOrStore(key interface{}, ttl time.Duration, f FetchCallback) (value interface{}, closer io.Closer, err error) {
+func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (value interface{}, closer io.Closer, err error) {
 	newrec := c.pool.Get().(*record)
 	for {
 		newrec.mu.Lock()
@@ -172,9 +161,9 @@ func (c *Cache) LoadOrStore(key interface{}, ttl time.Duration, f FetchCallback)
 				return nil, nil, err
 			}
 			newrec.init(value, ttl)
-			overflowed := c.list.Push(key, newrec.ring)
-			if overflowed != nil {
-				c.Delete(overflowed)
+			lfu := c.list.Push(key, newrec.ring)
+			if lfu != nil {
+				c.Delete(lfu)
 			}
 			return value, newrec, nil
 		}
@@ -195,42 +184,60 @@ func (c *Cache) Delete(key interface{}) {
 	if !loaded {
 		return
 	}
-	rec := value.(*record)
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
+	finalize := func() (interface{}, bool) {
+		rec := value.(*record)
 		rec.mu.Lock()
 		defer rec.mu.Unlock()
 		if !rec.softDelete() {
-			return
+			return nil, false
 		}
+		v := rec.value
 		c.list.Remove(rec.ring)
-
-		value := rec.value
-		c.wg.Add(1)
-		go func() {
-			defer c.wg.Done()
-			rec.mu.Lock()
-			rec.wg.Wait()
-			rec.finish()
-			rec.mu.Unlock()
-			c.pool.Put(rec)
-			if c.afterEvict != nil {
-				c.afterEvict(key, value)
-			}
-		}()
+		rec.wg.Wait()
+		rec.finalize()
+		c.pool.Put(rec)
+		return v, true
+	}
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		if value, exists := finalize(); exists && c.afterEvict != nil {
+			c.afterEvict(key, value)
+		}
 	}()
+}
+
+func (c *Cache) updateHits(r *record) {
+	if hits := atomic.SwapUint32(&r.hits, 0); hits > 0 {
+		c.list.Promote(r.ring, hits)
+	}
+}
+
+func (c *Cache) runLoop() {
+	ticker := time.NewTicker(SyncInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-c.quit:
+			return
+		case now := <-ticker.C:
+			c.processRecords(now.UnixNano())
+		}
+	}
 }
 
 func (c *Cache) processRecords(now int64) {
 	c.records.Range(func(key, value interface{}) bool {
-		rec := value.(*record)
-		rec.mu.RLock()
-		defer rec.mu.RUnlock()
-		if rec.expires > 0 && rec.expires < now {
+		r := value.(*record)
+		r.mu.RLock()
+		defer r.mu.RUnlock()
+		if !r.valid() {
+			return true
+		}
+		if r.expires > 0 && r.expires < now {
 			c.Delete(key)
-		} else if hits := atomic.SwapUint32(&rec.hits, 0); hits > 0 {
-			c.list.Promote(rec.ring, hits)
+		} else {
+			c.updateHits(r)
 		}
 		return true
 	})
