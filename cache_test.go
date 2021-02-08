@@ -179,6 +179,7 @@ var _ = Describe("eviction callback", func() {
 
 	AfterEach(func() {
 		c.Close()
+		fmt.Println("f7")
 		Expect(c.Len()).To(BeZero())
 	})
 
@@ -186,30 +187,41 @@ var _ = Describe("eviction callback", func() {
 		fmt.Println(5)
 		key := uint64(0)
 
+		fmt.Println("f1")
+
 		// Fetch a key and keep it alive by not closing the closer.
 		_, closer, _ := c.Fetch("key", time.Nanosecond, func() (interface{}, error) {
 			// time.Sleep(100 * time.Millisecond)
 			return atomic.AddUint64(&key, 1), nil
 		})
 
+		fmt.Println("f2")
+
 		Eventually(func() uint64 {
+			fmt.Println("before fetch")
 			value, closer, _ := c.Fetch("key", 10*time.Millisecond, func() (interface{}, error) {
-				time.Sleep(20 * time.Microsecond)
+				fmt.Println("returning new key")
 				return atomic.AddUint64(&key, 1), nil
 			})
+			fmt.Println("after fetch")
 			Expect(closer).NotTo(BeNil())
 			closer.Close()
 			return value.(uint64)
 		}).Should(Equal(uint64(2)))
 
+		fmt.Println("f3")
+
 		// Second value before first value.
 		Expect(<-evicted).To(Equal(uint64(2)))
+		fmt.Println("f4")
 		closer.Close()
 		Expect(<-evicted).To(Equal(uint64(1)))
+		fmt.Println("f5")
 
 		Eventually(func() int {
 			return c.Len()
 		}).Should(BeZero())
+		fmt.Println("f6")
 	})
 })
 
@@ -376,7 +388,7 @@ var _ = Describe("eventual overflow eviction order", func() {
 	)
 
 	BeforeEach(func() {
-		evictedKeys = make(chan uint64, 2<<16)
+		evictedKeys = make(chan uint64, n)
 		key = 0
 		c = evcache.New().
 			WithEvictionCallback(func(key, _ interface{}) {
@@ -429,11 +441,15 @@ var _ = Describe("eventual overflow eviction order", func() {
 		Specify("the eviction order is almost sorted by key hit count", func() {
 			Skip("TODO")
 			fmt.Println(9)
-			warmup()
-			keys := overflow()
-			spew.Dump(keys)
-			sortedness := calcSortedness(sort.Reverse(sort.IntSlice(keys)))
-			spew.Dump(sortedness)
+			for i := 0; i < 1; i++ {
+				warmup()
+				time.Sleep(2 * evcache.SyncInterval)
+				keys := overflow()
+				spew.Dump(keys)
+				sortedness := calcSortedness(sort.Reverse(sort.IntSlice(keys)))
+				spew.Dump(sortedness)
+
+			}
 		})
 	})
 })

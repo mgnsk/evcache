@@ -10,9 +10,8 @@ import (
 
 // SyncInterval is the interval for background loop.
 //
-// If records are created faster than SyncInterval and
-// cache overflows, the LFU eviction order becomes
-// the reverse order of insertion order.
+// If cache overflows and records are created faster than
+// SyncInterval, the LFU eviction starts losing order.
 var SyncInterval = time.Second
 
 // FetchCallback is called when *Cache.Fetch has a miss
@@ -148,31 +147,31 @@ func (c *Cache) Load(key interface{}) (value interface{}, closer io.Closer, exis
 // When the returned value is not used anymore, the caller MUST call closer.Close()
 // or a memory leak will occur.
 func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (value interface{}, closer io.Closer, err error) {
-	newrec := c.pool.Get().(*record)
+	new := c.pool.Get().(*record)
 	for {
-		newrec.mu.Lock()
-		old, loaded := c.records.LoadOrStore(key, newrec)
+		new.mu.Lock()
+		old, loaded := c.records.LoadOrStore(key, new)
 		if !loaded {
-			defer newrec.mu.Unlock()
+			defer new.mu.Unlock()
 			value, err := f()
 			if err != nil {
-				c.pool.Put(newrec)
+				c.pool.Put(new)
 				c.Delete(key)
 				return nil, nil, err
 			}
-			newrec.init(value, ttl)
-			lfu := c.list.Push(key, newrec.ring)
+			new.init(value, ttl)
+			lfu := c.list.Push(key, new.ring)
 			if lfu != nil {
 				c.Delete(lfu)
 			}
-			return value, newrec, nil
+			return value, new, nil
 		}
-		newrec.mu.Unlock()
-		c.pool.Put(newrec)
+		new.mu.Unlock()
 
 		oldrec := old.(*record)
 		value, exists := oldrec.Load()
 		if exists {
+			c.pool.Put(new)
 			return value, oldrec, nil
 		}
 	}
@@ -184,33 +183,23 @@ func (c *Cache) Delete(key interface{}) {
 	if !loaded {
 		return
 	}
-	finalize := func() (interface{}, bool) {
-		rec := value.(*record)
-		rec.mu.Lock()
-		defer rec.mu.Unlock()
-		if !rec.softDelete() {
-			return nil, false
-		}
-		v := rec.value
-		c.list.Remove(rec.ring)
-		rec.wg.Wait()
-		rec.finalize()
-		c.pool.Put(rec)
-		return v, true
-	}
 	c.wg.Add(1)
 	go func() {
+		r := value.(*record)
 		defer c.wg.Done()
-		if value, exists := finalize(); exists && c.afterEvict != nil {
+		value, ok := r.LoadAndDelete()
+		if !ok {
+			return
+		}
+		if c.list.Remove(r.ring) != key {
+			panic("evcache: invalid ring")
+		}
+		r.wg.Wait()
+		c.pool.Put(r)
+		if c.afterEvict != nil {
 			c.afterEvict(key, value)
 		}
 	}()
-}
-
-func (c *Cache) updateHits(r *record) {
-	if hits := atomic.SwapUint32(&r.hits, 0); hits > 0 {
-		c.list.Promote(r.ring, hits)
-	}
 }
 
 func (c *Cache) runLoop() {
@@ -231,13 +220,13 @@ func (c *Cache) processRecords(now int64) {
 		r := value.(*record)
 		r.mu.RLock()
 		defer r.mu.RUnlock()
-		if !r.valid() {
+		if !r.alive {
 			return true
 		}
 		if r.expires > 0 && r.expires < now {
 			c.Delete(key)
-		} else {
-			c.updateHits(r)
+		} else if hits := atomic.SwapUint32(&r.hits, 0); hits > 0 {
+			c.list.Promote(r.ring, hits)
 		}
 		return true
 	})
