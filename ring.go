@@ -15,7 +15,7 @@ type lfuRing struct {
 	capacity uint32
 }
 
-func newLFUList(capacity uint32) *lfuRing {
+func newLFURing(capacity uint32) *lfuRing {
 	l := &lfuRing{
 		capacity: capacity,
 	}
@@ -63,13 +63,11 @@ func (l *lfuRing) Promote(r *ring.Ring, hits uint32) {
 	}
 	for i := uint32(0); i < hits; i++ {
 		next := target.Next()
+		target = next
 		if next == l.cursor {
-			target = next
 			break
 		}
-		target = next
 	}
-
 	if r.Prev().Unlink(1) != r {
 		panic("evcache: invalid ring")
 	}
@@ -80,15 +78,17 @@ func (l *lfuRing) Promote(r *ring.Ring, hits uint32) {
 }
 
 func (l *lfuRing) unlink(r *ring.Ring) (key interface{}) {
+	if l.cursor == nil {
+		panic("evcache: cursor must not be nil")
+	}
+	if l.cursor == r {
+		l.cursor = l.cursor.Prev()
+	}
 	if r.Prev().Unlink(1) != r {
 		panic("evcache: invalid ring")
-	}
-	if r == l.cursor {
-		l.cursor = l.cursor.Prev()
 	}
 	if size := atomic.AddUint32(&l.size, ^uint32(0)); size == 0 {
 		l.cursor = nil
 	}
-
 	return r.Value
 }

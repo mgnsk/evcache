@@ -35,7 +35,7 @@ type Cache struct {
 	records    sync.Map
 	pool       sync.Pool
 	wg         sync.WaitGroup
-	list       *lfuRing
+	ring       *lfuRing
 	afterEvict EvictionCallback
 	quit       chan struct{}
 }
@@ -56,7 +56,7 @@ func New() Builder {
 				return &record{ring: ring.New(1)}
 			},
 		}
-		c.list = newLFUList(0)
+		c.ring = newLFURing(0)
 		c.quit = make(chan struct{})
 	}
 }
@@ -80,7 +80,7 @@ func (build Builder) WithCapacity(capacity uint32) Builder {
 	return func(c *Cache) {
 		build(c)
 
-		c.list = newLFUList(capacity)
+		c.ring = newLFURing(capacity)
 	}
 }
 
@@ -112,22 +112,22 @@ func (c *Cache) Close() error {
 // Flush evicts all keys from the cache.
 func (c *Cache) Flush() {
 	c.records.Range(func(key, _ interface{}) bool {
-		c.Delete(key)
+		c.Evict(key)
 		return true
 	})
 }
 
 // Len returns the number of keys in the cache.
 func (c *Cache) Len() int {
-	return c.list.Len()
+	return c.ring.Len()
 }
 
-// Load returns the value stored in the cache for a key. The boolean indicates
+// Get returns the value stored in the cache for a key. The boolean indicates
 // whether a value was found.
 //
 // When the returned value is not used anymore, the caller MUST call closer.Close()
 // or a memory leak will occur.
-func (c *Cache) Load(key interface{}) (value interface{}, closer io.Closer, exists bool) {
+func (c *Cache) Get(key interface{}) (value interface{}, closer io.Closer, exists bool) {
 	for {
 		old, ok := c.records.Load(key)
 		if !ok {
@@ -156,13 +156,12 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 			value, err := f()
 			if err != nil {
 				c.pool.Put(new)
-				c.Delete(key)
+				c.Evict(key)
 				return nil, nil, err
 			}
 			new.init(value, ttl)
-			lfu := c.list.Push(key, new.ring)
-			if lfu != nil {
-				c.Delete(lfu)
+			if lfu := c.ring.Push(key, new.ring); lfu != nil {
+				c.Evict(lfu)
 			}
 			return value, new, nil
 		}
@@ -177,8 +176,8 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 	}
 }
 
-// Delete a key.
-func (c *Cache) Delete(key interface{}) {
+// Evict a key.
+func (c *Cache) Evict(key interface{}) {
 	value, loaded := c.records.LoadAndDelete(key)
 	if !loaded {
 		return
@@ -191,7 +190,7 @@ func (c *Cache) Delete(key interface{}) {
 		if !ok {
 			return
 		}
-		if c.list.Remove(r.ring) != key {
+		if c.ring.Remove(r.ring) != key {
 			panic("evcache: invalid ring")
 		}
 		r.wg.Wait()
@@ -224,9 +223,9 @@ func (c *Cache) processRecords(now int64) {
 			return true
 		}
 		if r.expires > 0 && r.expires < now {
-			c.Delete(key)
+			c.Evict(key)
 		} else if hits := atomic.SwapUint32(&r.hits, 0); hits > 0 {
-			c.list.Promote(r.ring, hits)
+			c.ring.Promote(r.ring, hits)
 		}
 		return true
 	})
