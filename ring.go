@@ -3,7 +3,10 @@ package evcache
 import (
 	"container/ring"
 	"sync"
+	"sync/atomic"
 )
+
+// TODO we need to only store keys, lets try it
 
 type lfuRing struct {
 	capacity uint32
@@ -11,7 +14,7 @@ type lfuRing struct {
 	// cursor is the most frequently used record.
 	// cursor.Next() is the least frequently used.
 	cursor *ring.Ring
-	length uint32
+	size   uint32
 }
 
 func newLFUList(capacity uint32) *lfuRing {
@@ -21,78 +24,70 @@ func newLFUList(capacity uint32) *lfuRing {
 	return l
 }
 
-func (l *lfuRing) pop() *record {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.cursor == nil || l.length <= l.capacity {
-		return nil
-	}
-	front := l.cursor.Unlink(1)
-	if front == front.Next() {
-		l.cursor = nil
-	}
-	l.length--
-	return front.Value.(*record)
+func (l *lfuRing) Len() int {
+	return int(atomic.LoadUint32(&l.size))
 }
 
-func (l *lfuRing) insert(r *ring.Ring) {
+// Push inserts a key as most frequently used.
+// r must be a ring containing a live? record.
+func (l *lfuRing) Push(key interface{}, r *ring.Ring) (overflowed interface{}) {
+	r.Value = key
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.cursor != nil {
 		l.cursor.Link(r)
 	}
 	l.cursor = r
-	// TODO Length?
-	l.length++
+	size := atomic.AddUint32(&l.size, 1)
+	if l.capacity > 0 && size > l.capacity {
+		// fmt.Println("overflow")
+		lfu := l.cursor.Next()
+		return lfu.Value
+		//lfu := l.cursor.Next()
+		//rec := lfu.Value.(*record)
+		//// TODO
+		//if rec.softDelete() {
+		//l.remove(lfu)
+		//}
+		//go func() {
+		//rec.mu.Lock()
+		//defer rec.mu.Unlock()
+		//rec.softDelete()
+		////if rec.softDelete() {
+		////l.Remove(lfu)
+		////}
+		//}()
+	}
+	return nil
 }
 
-func (l *lfuRing) remove(r *ring.Ring) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	res := r.Prev().Unlink(1)
-	if res != r {
+func (l *lfuRing) remove(r *ring.Ring) (key interface{}) {
+	if r.Prev().Unlink(1) != r {
 		panic("evcache: invalid ring")
 	}
-	// r.Value = nil
-	// l.pool.Put(r)
-	l.length--
-}
-
-func (l *lfuRing) promote(r *ring.Ring, hits uint32) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	//if l.length < 2 {
-	//return
-	//}
-	//if l.back.Len() <= 1 {
-	//return
-	//}
-	//if l.list.Len() <= 1 {
-	//return
-	//}
-	// Move the record forward in the list
-	// by hits delta or until end of list.
-
-	// TODO call l.back.Move(1)
-
-	// if 1 hit then 1 m ove?
-	//
-	// if hits > 0 && l.length > 1 && hits
-	// how do we know how much till end (l.back)?
-	if l.cursor == nil {
-		l.cursor = r
-		return
-		// panic("lfuRing: cursor must not be nil")
+	if r == l.cursor {
+		l.cursor = l.cursor.Prev()
+	}
+	if size := atomic.AddUint32(&l.size, ^uint32(0)); size == 0 {
+		l.cursor = nil
 	}
 
-	// TODO move
-	target := r
-	//if target == target.Next() {
-	//defer func() {
-	//l.cursor = nil
-	//}()
-	//}
+	return r.Value
+}
 
+func (l *lfuRing) Remove(r *ring.Ring) (key interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.remove(r)
+}
+
+func (l *lfuRing) Promote(r *ring.Ring, hits uint32) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.cursor == nil {
+		panic("evcache: cursor must not be nil")
+	}
+	target := r
 	if target == target.Next() {
 		return
 	}
@@ -100,21 +95,15 @@ func (l *lfuRing) promote(r *ring.Ring, hits uint32) {
 		next := target.Next()
 		if next == l.cursor {
 			target = next
-			// fmt.Println("hit back")
 			break
 		}
 		target = next
 	}
-	// fmt.Println("promote")
-	tmp := r.Prev().Unlink(1)
-	if target == l.cursor {
-		// fmt.Println("update back")
-		l.cursor = tmp
-		// TODO were losing l.back
-
-		// need to remove the elem and link after target
-
-		// l.list.MoveAfter(elem, target)
+	if r.Prev().Unlink(1) != r {
+		panic("evcache: invalid ring")
 	}
-	target.Link(tmp)
+	if target == l.cursor {
+		l.cursor = r
+	}
+	target.Link(r)
 }
