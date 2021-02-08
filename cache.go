@@ -117,9 +117,21 @@ func (c *Cache) Close() error {
 	close(c.quit)
 	c.wg.Wait()
 	c.Flush()
-	// TODO
-	// c.wg.Wait()
+	c.wg.Wait()
 	return nil
+}
+
+// Flush evicts all keys from the cache.
+func (c *Cache) Flush() {
+	c.records.Range(func(key, _ interface{}) bool {
+		c.Delete(key)
+		return true
+	})
+}
+
+// Len returns the number of keys in the cache.
+func (c *Cache) Len() int {
+	return c.list.Len()
 }
 
 // Load returns the value stored in the cache for a key. The boolean indicates
@@ -138,7 +150,6 @@ func (c *Cache) Load(key interface{}) (value interface{}, closer io.Closer, exis
 		if exists {
 			return value, oldrec, true
 		}
-		c.LoadAndDelete(key)
 	}
 }
 
@@ -156,14 +167,14 @@ func (c *Cache) LoadOrStore(key interface{}, ttl time.Duration, f FetchCallback)
 			defer newrec.mu.Unlock()
 			value, err := f()
 			if err != nil {
-				c.LoadAndDelete(key)
+				c.pool.Put(newrec)
+				c.Delete(key)
 				return nil, nil, err
 			}
-			c.initRecord(newrec, value, ttl)
-			newrec.hit()
+			newrec.init(value, ttl)
 			overflowed := c.list.Push(key, newrec.ring)
 			if overflowed != nil {
-				c.LoadAndDelete(overflowed)
+				c.Delete(overflowed)
 			}
 			return value, newrec, nil
 		}
@@ -175,63 +186,24 @@ func (c *Cache) LoadOrStore(key interface{}, ttl time.Duration, f FetchCallback)
 		if exists {
 			return value, oldrec, nil
 		}
-		c.LoadAndDelete(key)
 	}
 }
 
-// LoadAndDelete a key and return its value if it exists.
-func (c *Cache) LoadAndDelete(key interface{}) (value interface{}, evicted bool) {
+// Delete a key.
+func (c *Cache) Delete(key interface{}) {
 	value, loaded := c.records.LoadAndDelete(key)
 	if !loaded {
-		return nil, false
+		return
 	}
 	rec := value.(*record)
-	return c.finalize(key, rec)
-}
-
-// Flush evicts all keys from the cache.
-func (c *Cache) Flush() {
-	c.records.Range(func(key, _ interface{}) bool {
-		c.LoadAndDelete(key)
-		return true
-	})
-}
-
-// Len returns the number of keys in the cache.
-func (c *Cache) Len() int {
-	return c.list.Len()
-}
-
-//func (c *Cache) acquire() uint32 {
-//return atomic.AddUint32(&c.backpressure, 1)
-//}
-
-//func (c *Cache) release(bp uint32) {
-//// if c.wouldOverflow(bp) {
-//c.evictLFU()
-////}
-//atomic.AddUint32(&c.backpressure, ^uint32(0))
-//}
-
-//func (c *Cache) wouldOverflow(bp uint32) bool {
-//size := uint32(c.list.Len())
-//return size > c.capacity && size-c.capacity > bp
-//}
-
-func (c *Cache) initRecord(rec *record, value interface{}, ttl time.Duration) {
-	if value != nil {
-		rec.value = value
-	}
-	if ttl > 0 {
-		rec.expires = time.Now().Add(ttl).UnixNano()
-	}
-	atomic.StoreUint32(&rec.state, stateAlive)
-}
-
-func (c *Cache) finalize(key interface{}, rec *record) (value interface{}, evicted bool) {
-	if rec.softDelete() {
-		value = rec.value
-		evicted = true
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		if !rec.softDelete() {
+			return
+		}
 		c.list.Remove(rec.ring)
 
 		value := rec.value
@@ -239,20 +211,15 @@ func (c *Cache) finalize(key interface{}, rec *record) (value interface{}, evict
 		go func() {
 			defer c.wg.Done()
 			rec.mu.Lock()
-			rec.mu.Unlock()
-
 			rec.wg.Wait()
-
-			rec.reset()
+			rec.finish()
+			rec.mu.Unlock()
 			c.pool.Put(rec)
-
 			if c.afterEvict != nil {
 				c.afterEvict(key, value)
 			}
 		}()
-	}
-
-	return value, evicted
+	}()
 }
 
 func (c *Cache) processRecords(now int64) {
@@ -260,13 +227,10 @@ func (c *Cache) processRecords(now int64) {
 		rec := value.(*record)
 		rec.mu.RLock()
 		defer rec.mu.RUnlock()
-
 		if rec.expires > 0 && rec.expires < now {
-			c.LoadAndDelete(key)
-		} else {
-			if hits := atomic.SwapUint32(&rec.hits, 0); hits > 0 {
-				c.list.Promote(rec.ring, hits)
-			}
+			c.Delete(key)
+		} else if hits := atomic.SwapUint32(&rec.hits, 0); hits > 0 {
+			c.list.Promote(rec.ring, hits)
 		}
 		return true
 	})

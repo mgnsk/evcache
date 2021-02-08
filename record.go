@@ -4,6 +4,7 @@ import (
 	"container/ring"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 const (
@@ -13,11 +14,11 @@ const (
 )
 
 type record struct {
-	mu    sync.RWMutex
-	value interface{}
-	ring  *ring.Ring
-	// value atomic.Value
-	wg      sync.WaitGroup
+	mu   sync.RWMutex
+	wg   sync.WaitGroup
+	ring *ring.Ring
+
+	value   interface{}
 	state   uint32
 	hits    uint32
 	expires int64
@@ -28,19 +29,32 @@ func (r *record) Close() error {
 	return nil
 }
 
-func (r *record) hit() {
-	r.wg.Add(1)
-	atomic.AddUint32(&r.hits, 1)
-}
-
 func (r *record) Load() (interface{}, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if !r.valid() {
 		return nil, false
 	}
-	r.hit()
+	r.wg.Add(1)
+	atomic.AddUint32(&r.hits, 1)
 	return r.value, true
+}
+
+func (r *record) init(value interface{}, ttl time.Duration) {
+	r.value = value
+	if ttl > 0 {
+		r.expires = time.Now().Add(ttl).UnixNano()
+	}
+	r.state = stateAlive
+	r.wg.Add(1)
+	atomic.AddUint32(&r.hits, 1)
+}
+
+func (r *record) finish() {
+	r.value = nil
+	r.state = stateZombie
+	r.hits = 0
+	r.expires = 0
 }
 
 func (r *record) valid() bool {
@@ -49,18 +63,4 @@ func (r *record) valid() bool {
 
 func (r *record) softDelete() bool {
 	return atomic.CompareAndSwapUint32(&r.state, stateAlive, stateDeleted)
-}
-
-//func (r *record) finalize() bool {
-//return atomic.CompareAndSwapUint32(&r.state, stateDeleted, stateZombie)
-//}
-
-func (r *record) reset() {
-	r.value = nil
-	// r.once = sync.Once{}
-	r.wg = sync.WaitGroup{}
-	// r.state = 0
-	atomic.StoreUint32(&r.state, stateZombie)
-	r.hits = 0
-	r.expires = 0
 }

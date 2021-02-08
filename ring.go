@@ -6,15 +6,13 @@ import (
 	"sync/atomic"
 )
 
-// TODO we need to only store keys, lets try it
-
 type lfuRing struct {
-	capacity uint32
-	mu       sync.Mutex
+	mu sync.Mutex
 	// cursor is the most frequently used record.
 	// cursor.Next() is the least frequently used.
-	cursor *ring.Ring
-	size   uint32
+	cursor   *ring.Ring
+	size     uint32
+	capacity uint32
 }
 
 func newLFUList(capacity uint32) *lfuRing {
@@ -29,7 +27,8 @@ func (l *lfuRing) Len() int {
 }
 
 // Push inserts a key as most frequently used.
-// r must be a ring containing a live? record.
+// If capacity is exceeded, the least frequently
+// used key is returned.
 func (l *lfuRing) Push(key interface{}, r *ring.Ring) (overflowed interface{}) {
 	r.Value = key
 	l.mu.Lock()
@@ -40,45 +39,16 @@ func (l *lfuRing) Push(key interface{}, r *ring.Ring) (overflowed interface{}) {
 	l.cursor = r
 	size := atomic.AddUint32(&l.size, 1)
 	if l.capacity > 0 && size > l.capacity {
-		// fmt.Println("overflow")
 		lfu := l.cursor.Next()
 		return lfu.Value
-		//lfu := l.cursor.Next()
-		//rec := lfu.Value.(*record)
-		//// TODO
-		//if rec.softDelete() {
-		//l.remove(lfu)
-		//}
-		//go func() {
-		//rec.mu.Lock()
-		//defer rec.mu.Unlock()
-		//rec.softDelete()
-		////if rec.softDelete() {
-		////l.Remove(lfu)
-		////}
-		//}()
 	}
 	return nil
-}
-
-func (l *lfuRing) remove(r *ring.Ring) (key interface{}) {
-	if r.Prev().Unlink(1) != r {
-		panic("evcache: invalid ring")
-	}
-	if r == l.cursor {
-		l.cursor = l.cursor.Prev()
-	}
-	if size := atomic.AddUint32(&l.size, ^uint32(0)); size == 0 {
-		l.cursor = nil
-	}
-
-	return r.Value
 }
 
 func (l *lfuRing) Remove(r *ring.Ring) (key interface{}) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.remove(r)
+	return l.unlink(r)
 }
 
 func (l *lfuRing) Promote(r *ring.Ring, hits uint32) {
@@ -106,4 +76,18 @@ func (l *lfuRing) Promote(r *ring.Ring, hits uint32) {
 		l.cursor = r
 	}
 	target.Link(r)
+}
+
+func (l *lfuRing) unlink(r *ring.Ring) (key interface{}) {
+	if r.Prev().Unlink(1) != r {
+		panic("evcache: invalid ring")
+	}
+	if r == l.cursor {
+		l.cursor = l.cursor.Prev()
+	}
+	if size := atomic.AddUint32(&l.size, ^uint32(0)); size == 0 {
+		l.cursor = nil
+	}
+
+	return r.Value
 }
