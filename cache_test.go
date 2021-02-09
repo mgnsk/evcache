@@ -223,40 +223,6 @@ var _ = Describe("flushing the cache", func() {
 	})
 })
 
-var _ = Describe("autoexpiry", func() {
-	var (
-		evicted chan bool
-		c       *evcache.Cache
-	)
-
-	BeforeEach(func() {
-		evicted = make(chan bool)
-		c = evcache.New().
-			WithEvictionCallback(func(_, _ interface{}) {
-				defer GinkgoRecover()
-				close(evicted)
-			}).
-			Build()
-	})
-
-	AfterEach(func() {
-		c.Close()
-		Expect(c.Len()).To(BeZero())
-	})
-
-	Specify("value with non-zero TTL will be evicted", func() {
-		ttl := 4 * evcache.SyncInterval
-		_, closer, _ := c.Fetch("key", ttl, func() (interface{}, error) {
-			return "value", nil
-		})
-		closer.Close()
-
-		Eventually(func() int {
-			return c.Len()
-		}).Should(BeZero())
-	})
-})
-
 var _ = Describe("eviction callback", func() {
 	var (
 		evicted chan uint64
