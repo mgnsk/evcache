@@ -1,6 +1,6 @@
 # evcache [![Go Reference](https://pkg.go.dev/badge/github.com/mgnsk/evcache.svg)](https://pkg.go.dev/github.com/mgnsk/evcache)
 
-This library is a work in progress.
+This README is a work in progress.
 
 ## How it works
 
