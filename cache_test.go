@@ -23,19 +23,23 @@ var _ = BeforeSuite(func() {
 })
 
 var _ = Describe("fetching values", func() {
-	var c *evcache.Cache
+	var (
+		evicted chan interface{}
+		c       *evcache.Cache
+	)
 
 	BeforeEach(func() {
-		c = evcache.New().Build()
-
-		value, closer, err := c.Fetch("key", 0, func() (interface{}, error) {
-			return "value", nil
-		})
-		Expect(err).To(BeNil())
-		closer.Close()
-		Expect(value).To(Equal("value"))
-
-		Expect(c.Len()).To(Equal(1))
+		evicted = make(chan interface{}, 1)
+		c = evcache.New().
+			WithEvictionCallback(func(key, _ interface{}) {
+				defer GinkgoRecover()
+				select {
+				case evicted <- key:
+				default:
+					Fail("expected only 1 eviction")
+				}
+			}).
+			Build()
 	})
 
 	AfterEach(func() {
@@ -43,15 +47,121 @@ var _ = Describe("fetching values", func() {
 		Expect(c.Len()).To(BeZero())
 	})
 
-	Specify("value is returned", func() {
-		value, closer, err := c.Fetch("key", 0, func() (interface{}, error) {
-			panic("unexpected fetch")
-		})
-		Expect(err).To(BeNil())
-		closer.Close()
-		Expect(value).To(Equal("value"))
+	When("key exists", func() {
+		BeforeEach(func() {
+			value, closer, err := c.Fetch("key", 0, func() (interface{}, error) {
+				return "value", nil
+			})
+			Expect(err).To(BeNil())
+			closer.Close()
+			Expect(value).To(Equal("value"))
 
-		Expect(c.Len()).To(Equal(1))
+			Expect(c.Len()).To(Equal(1))
+		})
+
+		Specify("value is returned", func() {
+			value, closer, err := c.Fetch("key", 0, func() (interface{}, error) {
+				panic("unexpected fetch")
+			})
+			Expect(err).To(BeNil())
+			closer.Close()
+			Expect(value).To(Equal("value"))
+
+			Expect(c.Len()).To(Equal(1))
+		})
+	})
+
+	When("callback blocks", func() {
+		var (
+			done         uint64
+			valueCh      chan string
+			fetchStarted chan struct{}
+			wg           sync.WaitGroup
+		)
+		BeforeEach(func() {
+			done = 0
+			valueCh = make(chan string, 1)
+			fetchStarted = make(chan struct{}, 1)
+			wg = sync.WaitGroup{}
+
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				defer GinkgoRecover()
+				_, closer, _ := c.Fetch("key", 0, func() (interface{}, error) {
+					fetchStarted <- struct{}{}
+					v := <-valueCh
+					if !atomic.CompareAndSwapUint64(&done, 0, 1) {
+						Fail("expected to return first")
+					}
+					return v, nil
+				})
+				closer.Close()
+			}()
+		})
+
+		Specify("accessing the same key will block", func() {
+			<-fetchStarted
+
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				defer GinkgoRecover()
+
+				// Make sure Get blocks on FetchCallback.
+				v, closer, exists := c.Get("key")
+				if atomic.CompareAndSwapUint64(&done, 0, 1) {
+					Fail("expected first Fetch to have returned first")
+				}
+				Expect(exists).To(BeTrue())
+				closer.Close()
+				Expect(v).To(Equal("value"))
+			}()
+
+			time.AfterFunc(4*evcache.SyncInterval, func() {
+				valueCh <- "value"
+			})
+
+			// Make sure Fetch blocks on FetchCallback.
+			v, closer, err := c.Fetch("key", 0, func() (interface{}, error) {
+				panic("unexpected fetch callback")
+			})
+			if atomic.CompareAndSwapUint64(&done, 0, 1) {
+				Fail("expected first Fetch to have returned first")
+			}
+			Expect(err).To(BeNil())
+			closer.Close()
+			Expect(v).To(Equal("value"))
+
+			wg.Wait()
+		})
+
+		Specify("autoexpiry keeps working", func() {
+			<-fetchStarted
+
+			// Verify other keys can expire.
+			v, closer, err := c.Fetch("key1", 4*evcache.SyncInterval, func() (interface{}, error) {
+				return "value1", nil
+			})
+			Expect(err).To(BeNil())
+			closer.Close()
+			Expect(v).To(Equal("value1"))
+			Expect(c.Len()).To(Equal(1))
+
+			Expect(<-evicted).To(Equal("key1"))
+			Expect(c.Len()).To(BeZero())
+
+			// Finally send a value and unblock the first key.
+			valueCh <- "value"
+			v, closer, exists := c.Get("key")
+			if atomic.CompareAndSwapUint64(&done, 0, 1) {
+				Fail("expected first Fetch to have returned first")
+			}
+			Expect(exists).To(BeTrue())
+			closer.Close()
+			Expect(v).To(Equal("value"))
+			Expect(c.Len()).To(Equal(1))
+		})
 	})
 })
 

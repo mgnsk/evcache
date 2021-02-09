@@ -96,32 +96,6 @@ func (build Builder) Build() *Cache {
 	return c
 }
 
-// Close shuts down the cache, evicts all keys
-// and waits for eviction callbacks to finish.
-//
-// It is not safe to close the cache
-// while in use.
-func (c *Cache) Close() error {
-	close(c.quit)
-	c.wg.Wait()
-	c.Flush()
-	c.wg.Wait()
-	return nil
-}
-
-// Flush evicts all keys from the cache.
-func (c *Cache) Flush() {
-	c.records.Range(func(key, _ interface{}) bool {
-		c.Evict(key)
-		return true
-	})
-}
-
-// Len returns the number of keys in the cache.
-func (c *Cache) Len() int {
-	return c.ring.Len()
-}
-
 // Get returns the value stored in the cache for a key. The boolean indicates
 // whether a value was found.
 //
@@ -211,8 +185,13 @@ func (c *Cache) Evict(key interface{}) {
 func (c *Cache) Range(f func(key, value interface{}) bool) {
 	c.records.Range(func(key, value interface{}) bool {
 		r := value.(*record)
+		if !r.IsActive() {
+			// Skip if Fetch callback is running
+			// or deleted.
+			return true
+		}
 		r.mu.RLock()
-		if !r.alive {
+		if !r.IsActive() {
 			r.mu.RUnlock()
 			return true
 		}
@@ -220,6 +199,32 @@ func (c *Cache) Range(f func(key, value interface{}) bool) {
 		r.mu.RUnlock()
 		return f(key, v)
 	})
+}
+
+// Flush evicts all keys from the cache.
+func (c *Cache) Flush() {
+	c.records.Range(func(key, _ interface{}) bool {
+		c.Evict(key)
+		return true
+	})
+}
+
+// Len returns the number of keys in the cache.
+func (c *Cache) Len() int {
+	return c.ring.Len()
+}
+
+// Close shuts down the cache, evicts all keys
+// and waits for eviction callbacks to finish.
+//
+// It is not safe to close the cache
+// while in use.
+func (c *Cache) Close() error {
+	close(c.quit)
+	c.wg.Wait()
+	c.Flush()
+	c.wg.Wait()
+	return nil
 }
 
 func (c *Cache) runLoop() {
@@ -238,9 +243,12 @@ func (c *Cache) runLoop() {
 func (c *Cache) processRecords(now int64) {
 	c.records.Range(func(key, value interface{}) bool {
 		r := value.(*record)
+		if !r.IsActive() {
+			return true
+		}
 		r.mu.RLock()
 		defer r.mu.RUnlock()
-		if !r.alive {
+		if !r.IsActive() {
 			return true
 		}
 		if r.expires > 0 && r.expires < now {
