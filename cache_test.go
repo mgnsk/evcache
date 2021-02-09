@@ -196,6 +196,43 @@ var _ = Describe("eviction callback", func() {
 	})
 })
 
+var _ = Describe("ranging over values", func() {
+	var (
+		evicted chan interface{}
+		c       *evcache.Cache
+	)
+
+	BeforeEach(func() {
+		evicted = make(chan interface{})
+		c = evcache.New().
+			WithEvictionCallback(func(key, _ interface{}) {
+				defer GinkgoRecover()
+				evicted <- key
+			}).
+			Build()
+	})
+
+	AfterEach(func() {
+		c.Close()
+		Expect(c.Len()).To(BeZero())
+	})
+
+	Specify("callback does not block record", func() {
+		_, closer, _ := c.Fetch("key", 100*time.Millisecond, func() (interface{}, error) {
+			return "value", nil
+		})
+		closer.Close()
+		Expect(c.Len()).To(Equal(1))
+
+		c.Range(func(key, value interface{}) bool {
+			Expect(key).To(Equal("key"))
+			Expect(<-evicted).To(Equal("key"))
+			Expect(c.Len()).To(BeZero())
+			return true
+		})
+	})
+})
+
 var _ = Describe("Fetch fails with an error", func() {
 	var (
 		n = 10

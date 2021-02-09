@@ -201,6 +201,27 @@ func (c *Cache) Evict(key interface{}) {
 	}()
 }
 
+// Range calls f sequentially for each key and value present in the cache.
+// If f returns false, range stops the iteration.
+//
+// Range does not necessarily correspond to any consistent snapshot of the cache's
+// contents: no key will be visited more than once, but if the value for any key
+// is stored or deleted concurrently, Range may reflect any mapping for that key
+// from any point during the Range call.
+func (c *Cache) Range(f func(key, value interface{}) bool) {
+	c.records.Range(func(key, value interface{}) bool {
+		r := value.(*record)
+		r.mu.RLock()
+		if !r.alive {
+			r.mu.RUnlock()
+			return true
+		}
+		v := r.value
+		r.mu.RUnlock()
+		return f(key, v)
+	})
+}
+
 func (c *Cache) runLoop() {
 	ticker := time.NewTicker(SyncInterval)
 	defer ticker.Stop()
