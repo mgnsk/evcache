@@ -28,14 +28,14 @@ var _ = Describe("fetching values", func() {
 	)
 
 	BeforeEach(func() {
-		evicted = make(chan interface{}, 1)
+		evicted = make(chan interface{}, 2)
 		c = evcache.New().
 			WithEvictionCallback(func(key, _ interface{}) {
 				defer GinkgoRecover()
 				select {
 				case evicted <- key:
 				default:
-					Fail("expected only 1 eviction")
+					Fail("expected only 2 evictions")
 				}
 			}).
 			Build()
@@ -131,6 +131,9 @@ var _ = Describe("fetching values", func() {
 			Expect(v).To(Equal("value"))
 
 			wg.Wait()
+
+			c.Close()
+			Expect(c.Len()).To(BeZero())
 		})
 
 		Specify("autoexpiry keeps working", func() {
@@ -158,6 +161,34 @@ var _ = Describe("fetching values", func() {
 			closer.Close()
 			Expect(v).To(Equal("value"))
 			Expect(c.Len()).To(Equal(1))
+
+			c.Close()
+			Expect(c.Len()).To(BeZero())
+		})
+
+		Specify("Range skips the blocking key", func() {
+			<-fetchStarted
+			v, closer, err := c.Fetch("key1", 0, func() (interface{}, error) {
+				return "value1", nil
+			})
+			Expect(err).To(BeNil())
+			closer.Close()
+			Expect(v).To(Equal("value1"))
+			Expect(c.Len()).To(Equal(1))
+
+			n := 0
+			c.Range(func(key, value interface{}) bool {
+				if key == "key" {
+					Fail("expected to skip key")
+				}
+				n++
+				return true
+			})
+			Expect(n).To(Equal(1))
+			valueCh <- "value"
+
+			c.Close()
+			Expect(c.Len()).To(BeZero())
 		})
 	})
 })

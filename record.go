@@ -44,11 +44,11 @@ func (r *record) Load() (interface{}, bool) {
 }
 
 func (r *record) LoadAndDelete() (interface{}, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if !atomic.CompareAndSwapUint32(&r.state, stateActive, stateInactive) {
 		return nil, false
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	value := r.value
 	r.value = nil
 	r.expires = 0
