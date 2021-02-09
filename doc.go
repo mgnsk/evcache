@@ -1,4 +1,4 @@
 /*
-Package evcache provides a sync.Map wrapper with a number of dynamic features.
+Package evcache provides a non-blocking eventually consistent LFU cache.
 */
 package evcache

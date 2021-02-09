@@ -2,7 +2,9 @@ package evcache_test
 
 import (
 	"errors"
+	"fmt"
 	"math/rand"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,37 +19,7 @@ var _ = BeforeSuite(func() {
 	rand.Seed(time.Now().UnixNano())
 	// Reduce the interval to make tests run faster
 	// and use gomega.Eventually with default timeout.
-	evcache.EvictionInterval = 10 * time.Millisecond
-})
-
-var _ = Describe("setting values", func() {
-	var c *evcache.Cache
-
-	BeforeEach(func() {
-		c = evcache.New().Build()
-	})
-
-	AfterEach(func() {
-		c.Close()
-		Expect(c.Len()).To(BeZero())
-	})
-
-	When("value exists", func() {
-		Specify("it is overwritten", func() {
-			replaced := c.Set("key", "value", 0)
-			Expect(replaced).To(BeFalse())
-			Expect(c.Len()).To(Equal(1))
-
-			replaced = c.Set("key", "newValue", 0)
-			Expect(replaced).To(BeTrue())
-			Expect(c.Len()).To(Equal(1))
-
-			value, closer, exists := c.Get("key")
-			Expect(exists).To(BeTrue())
-			defer closer.Close()
-			Expect(value).To(Equal("newValue"))
-		})
-	})
+	evcache.SyncInterval = 10 * time.Millisecond
 })
 
 var _ = Describe("fetching values", func() {
@@ -55,6 +27,39 @@ var _ = Describe("fetching values", func() {
 
 	BeforeEach(func() {
 		c = evcache.New().Build()
+
+		value, closer, err := c.Fetch("key", 0, func() (interface{}, error) {
+			return "value", nil
+		})
+		Expect(err).To(BeNil())
+		closer.Close()
+		Expect(value).To(Equal("value"))
+
+		Expect(c.Len()).To(Equal(1))
+	})
+
+	AfterEach(func() {
+		c.Close()
+		Expect(c.Len()).To(BeZero())
+	})
+
+	Specify("value is returned", func() {
+		value, closer, err := c.Fetch("key", 0, func() (interface{}, error) {
+			panic("unexpected fetch")
+		})
+		Expect(err).To(BeNil())
+		closer.Close()
+		Expect(value).To(Equal("value"))
+
+		Expect(c.Len()).To(Equal(1))
+	})
+})
+
+var _ = Describe("deleting values", func() {
+	var c *evcache.Cache
+
+	BeforeEach(func() {
+		c = evcache.New().Build()
 	})
 
 	AfterEach(func() {
@@ -63,36 +68,19 @@ var _ = Describe("fetching values", func() {
 	})
 
 	When("value exists", func() {
-		Specify("it is returned", func() {
-			replaced := c.Set("key", "value", 0)
-			Expect(replaced).To(BeFalse())
-
-			value, closer, err := c.Fetch("key", 0, func() (interface{}, error) {
-				panic("unexpected fetch")
-			})
-			Expect(err).To(BeNil())
-			defer closer.Close()
-			Expect(value).To(Equal("value"))
-
-			Expect(c.Len()).To(Equal(1))
-		})
-	})
-
-	When("the value does not exist", func() {
-		Specify("it is created", func() {
-			value, closer, err := c.Fetch("key", 0, func() (interface{}, error) {
+		Specify("it is evicted", func() {
+			// Stores are synchronous.
+			_, closer, _ := c.Fetch("key", 0, func() (interface{}, error) {
 				return "value", nil
 			})
-			Expect(err).To(BeNil())
-			defer closer.Close()
-			Expect(value).To(Equal("value"))
-
-			value, closer, exists := c.Get("key")
-			Expect(exists).To(BeTrue())
-			defer closer.Close()
-			Expect(value).To(Equal("value"))
-
+			closer.Close()
 			Expect(c.Len()).To(Equal(1))
+
+			// Deletes are asynchronous.
+			c.Evict("key")
+			Eventually(func() int {
+				return c.Len()
+			}).Should(BeZero())
 		})
 	})
 })
@@ -111,12 +99,16 @@ var _ = Describe("flushing the cache", func() {
 
 	When("the cache is flushed", func() {
 		Specify("all records are evicted", func() {
-			replaced := c.Set("key", "value", 0)
-			Expect(replaced).To(BeFalse())
+			_, closer, _ := c.Fetch("key", 0, func() (interface{}, error) {
+				return "value", nil
+			})
+			closer.Close()
 			Expect(c.Len()).To(Equal(1))
 
 			c.Flush()
-			Expect(c.Len()).To(Equal(0))
+			Eventually(func() int {
+				return c.Len()
+			}).Should(BeZero())
 		})
 	})
 })
@@ -143,17 +135,15 @@ var _ = Describe("autoexpiry", func() {
 	})
 
 	Specify("value with non-zero TTL will be evicted", func() {
-		ttl := 4 * evcache.EvictionInterval
-		c.Set("key", "value", ttl)
-
-		start := time.Now()
-		<-evicted
+		ttl := 4 * evcache.SyncInterval
+		_, closer, _ := c.Fetch("key", ttl, func() (interface{}, error) {
+			return "value", nil
+		})
+		closer.Close()
 
 		Eventually(func() int {
 			return c.Len()
 		}).Should(BeZero())
-
-		Expect(time.Since(start)).To(BeNumerically(">=", 2*evcache.EvictionInterval))
 	})
 })
 
@@ -190,6 +180,7 @@ var _ = Describe("eviction callback", func() {
 			value, closer, _ := c.Fetch("key", 10*time.Millisecond, func() (interface{}, error) {
 				return atomic.AddUint64(&key, 1), nil
 			})
+			Expect(closer).NotTo(BeNil())
 			closer.Close()
 			return value.(uint64)
 		}).Should(Equal(uint64(2)))
@@ -207,7 +198,7 @@ var _ = Describe("eviction callback", func() {
 
 var _ = Describe("Fetch fails with an error", func() {
 	var (
-		n = 1000
+		n = 10
 		c *evcache.Cache
 	)
 
@@ -243,55 +234,10 @@ var _ = Describe("Fetch fails with an error", func() {
 	})
 })
 
-var _ = Describe("repeatedly setting the same key", func() {
-	var (
-		n       = 1000
-		evicted uint64
-		c       *evcache.Cache
-	)
-
-	BeforeEach(func() {
-		c = evcache.New().
-			WithEvictionCallback(func(_, _ interface{}) {
-				defer GinkgoRecover()
-				atomic.AddUint64(&evicted, 1)
-			}).
-			Build()
-	})
-
-	AfterEach(func() {
-		c.Close()
-		Expect(c.Len()).To(BeZero())
-	})
-
-	Specify("old value is evicted", func() {
-		wg := sync.WaitGroup{}
-		wg.Add(n)
-		for i := 0; i < n; i++ {
-			go func() {
-				defer wg.Done()
-				defer GinkgoRecover()
-				c.Set("key", "value", 0)
-				Expect(c.Len()).To(Equal(1))
-			}()
-		}
-
-		wg.Wait()
-
-		Eventually(func() int {
-			return c.Len()
-		}).Should(Equal(1))
-
-		Eventually(func() uint64 {
-			return atomic.LoadUint64(&evicted)
-		}).Should(Equal(uint64(n - 1))) // 1 value stays in the cache.
-	})
-})
-
 var _ = Describe("overflow when setting values", func() {
 	var (
 		n        = 10
-		overflow = 1000
+		overflow = 5
 		evicted  uint64
 		c        *evcache.Cache
 	)
@@ -310,13 +256,18 @@ var _ = Describe("overflow when setting values", func() {
 	When("Set causes an overflow", func() {
 		Specify("eventually overflowed records are evicted", func() {
 			for i := 0; i < n+overflow; i++ {
-				c.Set(i, nil, 0)
-				Expect(c.Len()).To(BeNumerically("<=", n+1))
+				_, closer, _ := c.Fetch(i, 0, func() (interface{}, error) {
+					return nil, nil
+				})
+				closer.Close()
+				Expect(c.Len()).To(BeNumerically("<=", n+overflow))
 			}
 
 			c.Close()
 			Expect(c.Len()).To(BeZero())
-			Expect(evicted).To(Equal(uint64(n + overflow)))
+			Eventually(func() uint64 {
+				return atomic.LoadUint64(&evicted)
+			}).Should(Equal(uint64(n + overflow)))
 		})
 	})
 
@@ -327,12 +278,14 @@ var _ = Describe("overflow when setting values", func() {
 					return nil, nil
 				})
 				closer.Close()
-				Expect(c.Len()).To(BeNumerically("<=", n+1))
+				Expect(c.Len()).To(BeNumerically("<=", n+overflow))
 			}
 
 			c.Close()
 			Expect(c.Len()).To(BeZero())
-			Expect(evicted).To(Equal(uint64(n + overflow)))
+			Eventually(func() uint64 {
+				return atomic.LoadUint64(&evicted)
+			}).Should(Equal(uint64(n + overflow)))
 		})
 	})
 
@@ -341,8 +294,7 @@ var _ = Describe("overflow when setting values", func() {
 		func(cb func(int)) {
 			var (
 				wg          sync.WaitGroup
-				deleted     uint64
-				concurrency = 64
+				concurrency = 4
 			)
 
 			sem := make(chan struct{}, concurrency)
@@ -355,43 +307,40 @@ var _ = Describe("overflow when setting values", func() {
 					defer wg.Done()
 					defer GinkgoRecover()
 					defer func() {
-						<-sem
+						select {
+						case <-sem:
+						default:
+						}
 					}()
 
 					cb(i)
-					Expect(c.Len()-n).To(BeNumerically("<=", concurrency), "overflow cannot exceed concurrency")
+					overflow := c.Len() - n
+					Expect(overflow).To(BeNumerically("<=", concurrency+1), "overflow cannot exceed concurrency+1")
 
 					// Randomly evict keys.
-					if rand.Float64() < 0.5 {
-						if _, ok := c.Evict(rand.Intn(i + 1)); ok {
-							atomic.AddUint64(&deleted, 1)
-						}
+					if rand.Float64() < 0.6 {
+						c.Evict(rand.Intn(i + 1))
 					}
 				}()
 			}
 
 			wg.Wait()
 
-			for i := 0; i < int(deleted); i++ {
-				c.Set(i, nil, 0)
-			}
-
 			c.Close()
 			Expect(c.Len()).To(BeZero())
-			Expect(evicted).To(Equal(uint64(n+overflow) + deleted))
+
+			Eventually(func() uint64 {
+				return atomic.LoadUint64(&evicted)
+			}).Should(Equal(uint64(n + overflow)))
 		},
-		Entry(
-			"Set",
-			func(i int) {
-				c.Set(i, nil, 0)
-			},
-		),
 		Entry(
 			"Fetch",
 			func(i int) {
-				_, closer, _ := c.Fetch(i, 0, func() (interface{}, error) {
-					return nil, nil
+				value, closer, err := c.Fetch(i, 0, func() (interface{}, error) {
+					return "value", nil
 				})
+				Expect(err).To(BeNil())
+				Expect(value).To(Equal("value"))
 				closer.Close()
 			},
 		),
@@ -400,15 +349,14 @@ var _ = Describe("overflow when setting values", func() {
 
 var _ = Describe("eventual overflow eviction order", func() {
 	var (
-		n            = 100
-		warmupRounds = 2
-		key          uint64
-		evictedKeys  chan uint64
-		c            *evcache.Cache
+		n           = 10
+		key         uint64
+		evictedKeys chan uint64
+		c           *evcache.Cache
 	)
 
 	BeforeEach(func() {
-		evictedKeys = make(chan uint64, n*warmupRounds)
+		evictedKeys = make(chan uint64, n)
 		key = 0
 		c = evcache.New().
 			WithEvictionCallback(func(key, _ interface{}) {
@@ -425,12 +373,17 @@ var _ = Describe("eventual overflow eviction order", func() {
 	})
 
 	When("records have different popularity", func() {
-		insert := func() {
+		warmup := func() {
 			for i := 1; i <= n; i++ {
 				k := atomic.AddUint64(&key, 1)
-				_ = c.Set(k, nil, 0)
-				// Make its hit count reflect the key.
-				for j := 1; j <= int(k); j++ {
+				_, closer, _ := c.Fetch(k, 0, func() (interface{}, error) {
+					return nil, nil
+				})
+				closer.Close()
+				// Make its hit count reflect the key
+				// in reverse order so we know the cache
+				// will sort the keys back.
+				for j := 1; j <= n-i; j++ {
 					_, closer, exists := c.Get(k)
 					Expect(exists).To(BeTrue())
 					closer.Close()
@@ -438,42 +391,41 @@ var _ = Describe("eventual overflow eviction order", func() {
 			}
 		}
 
-		BeforeEach(func() {
-			// The eviction order becomes 100% ordered
-			// after the cache has evicted its full
-			// capacity of keys - there has been
-			// one turnover.
-			for i := 0; i < warmupRounds; i++ {
-				insert()
-			}
-
-			Eventually(func() int {
-				return c.Len()
-			}).Should(Equal(n))
-
-			// Drain warmup values (not yet ordered).
-			for i := 0; i < n*(warmupRounds-1); i++ {
-				<-evictedKeys
-			}
-
-			select {
-			case <-evictedKeys:
-				Fail("did not expect to receive from evicted chan")
-			default:
-			}
-		})
-
-		Specify("the eviction order is sorted by key hit count", func() {
-			var prev uint64
+		overflow := func() (keys []int) {
 			for i := 0; i < n; i++ {
-				// Overflow the cache.
+				// Overflow the cache and catch the evicted keys.
 				k := atomic.AddUint64(&key, 1)
-				c.Set(k, nil, 0)
-
-				evicted := <-evictedKeys
-				Expect(evicted).To(BeNumerically(">", prev), "expect LFU order")
-				prev = evicted
+				_, closer, _ := c.Fetch(k, 0, func() (interface{}, error) {
+					return nil, nil
+				})
+				closer.Close()
+				evictedKey := int(<-evictedKeys)
+				keys = append(keys, evictedKey)
 			}
+			return keys
+		}
+
+		Specify("the eviction order is almost sorted by key hit count", func() {
+			warmup()
+
+			time.Sleep(2 * evcache.SyncInterval)
+
+			keys := overflow()
+			fmt.Printf("near-decreasing order: %v\n", keys)
+
+			sortedness := calcSortedness(sort.Reverse(sort.IntSlice(keys)))
+			fmt.Printf("reverse-sortedness: %f\n", sortedness)
 		})
 	})
 })
+
+func calcSortedness(data sort.Interface) float64 {
+	invalid := 0
+	n := data.Len()
+	for i := n - 1; i > 0; i-- {
+		if data.Less(i, i-1) {
+			invalid++
+		}
+	}
+	return 1.0 - float64(invalid)/float64(n)
+}

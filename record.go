@@ -1,19 +1,21 @@
 package evcache
 
 import (
-	"container/list"
+	"container/ring"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type record struct {
-	mu      sync.RWMutex
+	mu   sync.RWMutex
+	wg   sync.WaitGroup
+	ring *ring.Ring
+
 	value   interface{}
-	elem    *list.Element
-	wg      sync.WaitGroup
-	deleted uint32
-	hits    uint32
 	expires int64
+	alive   bool
+	hits    uint32
 }
 
 func (r *record) Close() error {
@@ -21,10 +23,10 @@ func (r *record) Close() error {
 	return nil
 }
 
-func (r *record) load() (interface{}, bool) {
+func (r *record) Load() (interface{}, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if r.isDeleted() {
+	if !r.alive {
 		return nil, false
 	}
 	r.wg.Add(1)
@@ -32,10 +34,26 @@ func (r *record) load() (interface{}, bool) {
 	return r.value, true
 }
 
-func (r *record) isDeleted() bool {
-	return atomic.LoadUint32(&r.deleted) != 0
+func (r *record) LoadAndDelete() (interface{}, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.alive {
+		return nil, false
+	}
+	value := r.value
+	r.value = nil
+	r.expires = 0
+	r.alive = false
+	r.hits = 0
+	return value, true
 }
 
-func (r *record) delete() {
-	atomic.StoreUint32(&r.deleted, 1)
+func (r *record) init(value interface{}, ttl time.Duration) {
+	r.value = value
+	if ttl > 0 {
+		r.expires = time.Now().Add(ttl).UnixNano()
+	}
+	r.alive = true
+	r.hits = 1
+	r.wg.Add(1)
 }
