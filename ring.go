@@ -39,7 +39,11 @@ func (l *lfuRing) Push(key interface{}, r *ring.Ring) (lfuKey interface{}) {
 	l.cursor = r
 	l.size++
 	if l.capacity > 0 && l.size > l.capacity {
-		return l.unlink(l.cursor.Next())
+		lfuKey = l.unlink(l.cursor.Next())
+		if lfuKey == key {
+			panic("evcache: lfuKey cannot be key")
+		}
+		return lfuKey
 	}
 	return nil
 }
@@ -48,8 +52,9 @@ func (l *lfuRing) Push(key interface{}, r *ring.Ring) (lfuKey interface{}) {
 func (l *lfuRing) Remove(r *ring.Ring) (key interface{}) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if r == r.Next() && r != l.cursor {
-		// A single ring element not belonging to lfuRing.
+	if r.Value == nil {
+		// An overflowed ring which was already unlinked by l.Push
+		// but the record not yet evicted.
 		return nil
 	}
 	return l.unlink(r)
@@ -59,6 +64,11 @@ func (l *lfuRing) Remove(r *ring.Ring) (key interface{}) {
 func (l *lfuRing) Promote(r *ring.Ring, hits uint32) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if r.Value == nil {
+		// An overflowed ring which was already unlinked by l.Push
+		// but the record not yet evicted.
+		return
+	}
 	if l.cursor == nil {
 		panic("evcache: cursor must not be nil")
 	}
@@ -83,6 +93,9 @@ func (l *lfuRing) Promote(r *ring.Ring, hits uint32) {
 }
 
 func (l *lfuRing) unlink(r *ring.Ring) (key interface{}) {
+	if r.Value == nil {
+		panic("evcache: r.Value must not be nil")
+	}
 	if l.cursor == nil {
 		panic("evcache: cursor must not be nil")
 	}

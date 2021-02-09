@@ -300,7 +300,7 @@ var _ = Describe("overflow when setting values", func() {
 					return nil, nil
 				})
 				closer.Close()
-				Expect(c.Len()).To(BeNumerically("<=", n+overflow))
+				Expect(c.Len()).To(BeNumerically("<=", n), "capacity cannot be exceeded")
 			}
 
 			Eventually(func() uint64 {

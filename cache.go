@@ -184,8 +184,8 @@ func (c *Cache) Evict(key interface{}) {
 	}
 	c.wg.Add(1)
 	go func() {
-		r := value.(*record)
 		defer c.wg.Done()
+		r := value.(*record)
 		value, ok := r.LoadAndDelete()
 		if !ok {
 			return
