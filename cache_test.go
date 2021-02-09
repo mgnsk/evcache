@@ -162,6 +162,8 @@ var _ = Describe("fetching values", func() {
 			Expect(v).To(Equal("value"))
 			Expect(c.Len()).To(Equal(1))
 
+			wg.Wait()
+
 			c.Close()
 			Expect(c.Len()).To(BeZero())
 		})
@@ -186,6 +188,8 @@ var _ = Describe("fetching values", func() {
 			})
 			Expect(n).To(Equal(1))
 			valueCh <- "value"
+
+			wg.Wait()
 
 			c.Close()
 			Expect(c.Len()).To(BeZero())
