@@ -71,8 +71,8 @@ func (build Builder) WithEvictionCallback(cb EvictionCallback) Builder {
 }
 
 // WithCapacity configures the cache with specified capacity.
-// If cache exceeds the limit, the least frequently
-// will begin to be evicted.
+// If cache exceeds the limit, the least frequently used
+// record is evicted.
 //
 // New records are inserted as the most frequently used to
 // reduce premature eviction of new but unused records.
@@ -147,30 +147,30 @@ func (c *Cache) Get(key interface{}) (value interface{}, closer io.Closer, exist
 // When the returned value is not used anymore, the caller MUST call closer.Close()
 // or a memory leak will occur.
 func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (value interface{}, closer io.Closer, err error) {
-	new := c.pool.Get().(*record)
+	newrec := c.pool.Get().(*record)
 	for {
-		new.mu.Lock()
-		old, loaded := c.records.LoadOrStore(key, new)
+		newrec.mu.Lock()
+		old, loaded := c.records.LoadOrStore(key, newrec)
 		if !loaded {
-			defer new.mu.Unlock()
+			defer newrec.mu.Unlock()
 			value, err := f()
 			if err != nil {
-				c.pool.Put(new)
+				c.pool.Put(newrec)
 				c.Evict(key)
 				return nil, nil, err
 			}
-			new.init(value, ttl)
-			if lfu := c.ring.Push(key, new.ring); lfu != nil {
+			newrec.init(value, ttl)
+			if lfu := c.ring.Push(key, newrec.ring); lfu != nil {
 				c.Evict(lfu)
 			}
-			return value, new, nil
+			return value, newrec, nil
 		}
-		new.mu.Unlock()
+		newrec.mu.Unlock()
 
 		oldrec := old.(*record)
 		value, exists := oldrec.Load()
 		if exists {
-			c.pool.Put(new)
+			c.pool.Put(newrec)
 			return value, oldrec, nil
 		}
 	}
