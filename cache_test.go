@@ -17,8 +17,7 @@ import (
 
 var _ = BeforeSuite(func() {
 	rand.Seed(time.Now().UnixNano())
-	// Reduce the interval to make tests run faster
-	// and use gomega.Eventually with default timeout.
+	// Reduce the interval to make tests run faster.
 	evcache.SyncInterval = 10 * time.Millisecond
 })
 
@@ -42,11 +41,6 @@ var _ = Describe("fetching values", func() {
 			Build()
 	})
 
-	AfterEach(func() {
-		c.Close()
-		Expect(c.Len()).To(BeZero())
-	})
-
 	When("key exists", func() {
 		BeforeEach(func() {
 			value, closer, err := c.Fetch("key", 0, func() (interface{}, error) {
@@ -68,6 +62,9 @@ var _ = Describe("fetching values", func() {
 			Expect(value).To(Equal("value"))
 
 			Expect(c.Len()).To(Equal(1))
+
+			c.Close()
+			Expect(c.Len()).To(BeZero())
 		})
 	})
 
@@ -172,11 +169,6 @@ var _ = Describe("deleting values", func() {
 		c = evcache.New().Build()
 	})
 
-	AfterEach(func() {
-		c.Close()
-		Expect(c.Len()).To(BeZero())
-	})
-
 	When("value exists", func() {
 		Specify("it is evicted", func() {
 			// Stores are synchronous.
@@ -191,6 +183,9 @@ var _ = Describe("deleting values", func() {
 			Eventually(func() int {
 				return c.Len()
 			}).Should(BeZero())
+
+			c.Close()
+			Expect(c.Len()).To(BeZero())
 		})
 	})
 })
@@ -200,11 +195,6 @@ var _ = Describe("flushing the cache", func() {
 
 	BeforeEach(func() {
 		c = evcache.New().Build()
-	})
-
-	AfterEach(func() {
-		c.Close()
-		Expect(c.Len()).To(BeZero())
 	})
 
 	When("the cache is flushed", func() {
@@ -219,6 +209,9 @@ var _ = Describe("flushing the cache", func() {
 			Eventually(func() int {
 				return c.Len()
 			}).Should(BeZero())
+
+			c.Close()
+			Expect(c.Len()).To(BeZero())
 		})
 	})
 })
@@ -239,33 +232,32 @@ var _ = Describe("eviction callback", func() {
 			Build()
 	})
 
-	AfterEach(func() {
-		c.Close()
-		Expect(c.Len()).To(BeZero())
-	})
-
 	Specify("callback waits for closers to be closed", func() {
-		key := uint64(0)
+		value := uint64(0)
 
-		// Fetch a key and keep it alive by not closing the closer.
+		// Fetch a value and keep it alive by not closing the closer.
 		_, closer, _ := c.Fetch("key", time.Nanosecond, func() (interface{}, error) {
-			return atomic.AddUint64(&key, 1), nil
+			return atomic.AddUint64(&value, 1), nil
 		})
 
+		// Let first value expire and fetch a new value.
 		Eventually(func() uint64 {
-			value, closer, _ := c.Fetch("key", 10*time.Millisecond, func() (interface{}, error) {
-				return atomic.AddUint64(&key, 1), nil
+			value, closer, _ := c.Fetch("key", time.Nanosecond, func() (interface{}, error) {
+				return atomic.AddUint64(&value, 1), nil
 			})
 			Expect(closer).NotTo(BeNil())
 			closer.Close()
 			return value.(uint64)
-		}).Should(Equal(uint64(2)))
+		}, 10*evcache.SyncInterval).Should(Equal(uint64(2)))
 
 		// Second value before first value.
 		Expect(<-evicted).To(Equal(uint64(2)))
 		closer.Close()
 		Expect(<-evicted).To(Equal(uint64(1)))
 
+		Expect(c.Len()).To(BeZero())
+
+		c.Close()
 		Expect(c.Len()).To(BeZero())
 	})
 })
@@ -286,11 +278,6 @@ var _ = Describe("ranging over values", func() {
 			Build()
 	})
 
-	AfterEach(func() {
-		c.Close()
-		Expect(c.Len()).To(BeZero())
-	})
-
 	Specify("callback does not block record", func() {
 		_, closer, _ := c.Fetch("key", 100*time.Millisecond, func() (interface{}, error) {
 			return "value", nil
@@ -304,6 +291,9 @@ var _ = Describe("ranging over values", func() {
 			Expect(c.Len()).To(BeZero())
 			return true
 		})
+
+		c.Close()
+		Expect(c.Len()).To(BeZero())
 	})
 })
 
@@ -315,11 +305,6 @@ var _ = Describe("Fetch fails with an error", func() {
 
 	BeforeEach(func() {
 		c = evcache.New().Build()
-	})
-
-	AfterEach(func() {
-		c.Close()
-		Expect(c.Len()).To(BeZero())
 	})
 
 	Specify("no records are cached", func() {
@@ -342,6 +327,9 @@ var _ = Describe("Fetch fails with an error", func() {
 		}
 
 		wg.Wait()
+
+		c.Close()
+		Expect(c.Len()).To(BeZero())
 	})
 })
 
@@ -364,11 +352,6 @@ var _ = Describe("overflow when setting values", func() {
 			Build()
 	})
 
-	AfterEach(func() {
-		c.Close()
-		Expect(c.Len()).To(BeZero())
-	})
-
 	When("Fetch causes an overflow", func() {
 		Specify("eventually overflowed records are evicted", func() {
 			for i := 0; i < n+overflow; i++ {
@@ -382,6 +365,9 @@ var _ = Describe("overflow when setting values", func() {
 			Eventually(func() uint64 {
 				return atomic.LoadUint64(&evicted)
 			}).Should(Equal(uint64(overflow)))
+
+			c.Close()
+			Expect(c.Len()).To(BeZero())
 		})
 	})
 
@@ -419,6 +405,9 @@ var _ = Describe("overflow when setting values", func() {
 			Eventually(func() uint64 {
 				return atomic.LoadUint64(&evicted)
 			}).Should(Equal(uint64(overflow)))
+
+			c.Close()
+			Expect(c.Len()).To(BeZero())
 		},
 		Entry(
 			"Fetch",
@@ -452,11 +441,6 @@ var _ = Describe("eventual overflow eviction order", func() {
 			}).
 			WithCapacity(uint32(n)).
 			Build()
-	})
-
-	AfterEach(func() {
-		c.Close()
-		Expect(c.Len()).To(BeZero())
 	})
 
 	When("records have different popularity", func() {
@@ -502,6 +486,9 @@ var _ = Describe("eventual overflow eviction order", func() {
 
 			sortedness := calcSortedness(sort.Reverse(sort.IntSlice(keys)))
 			fmt.Printf("reverse-sortedness: %f\n", sortedness)
+
+			c.Close()
+			Expect(c.Len()).To(BeZero())
 		})
 	})
 })

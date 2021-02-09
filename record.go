@@ -44,11 +44,11 @@ func (r *record) Load() (interface{}, bool) {
 }
 
 func (r *record) LoadAndDelete() (interface{}, bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	if !atomic.CompareAndSwapUint32(&r.state, stateActive, stateInactive) {
 		return nil, false
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	value := r.value
 	r.value = nil
 	r.expires = 0
@@ -57,12 +57,12 @@ func (r *record) LoadAndDelete() (interface{}, bool) {
 }
 
 func (r *record) init(value interface{}, ttl time.Duration) {
+	if !atomic.CompareAndSwapUint32(&r.state, stateInactive, stateActive) {
+		panic("evcache: invalid record state")
+	}
 	r.value = value
 	if ttl > 0 {
 		r.expires = time.Now().Add(ttl).UnixNano()
-	}
-	if !atomic.CompareAndSwapUint32(&r.state, stateInactive, stateActive) {
-		panic("evcache: invalid record state")
 	}
 	r.hits = 1
 	r.wg.Add(1)

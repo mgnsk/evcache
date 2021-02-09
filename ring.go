@@ -77,9 +77,8 @@ func (l *lfuRing) Promote(r *ring.Ring, hits uint32) {
 	}
 	target := r
 	for i := uint32(0); i < hits; i++ {
-		next := target.Next()
-		target = next
-		if next == l.cursor {
+		if target = target.Next(); target == l.cursor {
+			l.cursor = r
 			break
 		}
 	}
@@ -87,9 +86,6 @@ func (l *lfuRing) Promote(r *ring.Ring, hits uint32) {
 		panic("evcache: invalid ring")
 	}
 	target.Link(r)
-	if target == l.cursor {
-		l.cursor = r
-	}
 }
 
 func (l *lfuRing) unlink(r *ring.Ring) (key interface{}) {

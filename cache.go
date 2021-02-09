@@ -121,31 +121,36 @@ func (c *Cache) Get(key interface{}) (value interface{}, closer io.Closer, exist
 // When the returned value is not used anymore, the caller MUST call closer.Close()
 // or a memory leak will occur.
 func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (value interface{}, closer io.Closer, err error) {
-	newrec := c.pool.Get().(*record)
-	for {
-		newrec.mu.Lock()
-		old, loaded := c.records.LoadOrStore(key, newrec)
-		if !loaded {
-			defer newrec.mu.Unlock()
-			value, err := f()
-			if err != nil {
-				c.pool.Put(newrec)
-				c.Evict(key)
-				return nil, nil, err
-			}
-			newrec.init(value, ttl)
-			if lfu := c.ring.Push(key, newrec.ring); lfu != nil {
-				c.Evict(lfu)
-			}
-			return value, newrec, nil
+	loadOrStore := func(r *record) (old *record, loaded bool) {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if old, loaded := c.records.LoadOrStore(key, r); loaded {
+			return old.(*record), true
 		}
-		newrec.mu.Unlock()
-
-		oldrec := old.(*record)
-		value, exists := oldrec.Load()
-		if exists {
-			c.pool.Put(newrec)
-			return value, oldrec, nil
+		value, err = f()
+		if err != nil {
+			c.Evict(key)
+			return nil, false
+		}
+		r.init(value, ttl)
+		if lfu := c.ring.Push(key, r.ring); lfu != nil {
+			c.Evict(lfu)
+		}
+		return nil, false
+	}
+	r := c.pool.Get().(*record)
+	for {
+		old, loaded := loadOrStore(r)
+		if err != nil {
+			c.pool.Put(r)
+			return nil, nil, err
+		}
+		if !loaded {
+			return value, r, nil
+		}
+		if v, loaded := old.Load(); loaded {
+			c.pool.Put(r)
+			return v, old, nil
 		}
 	}
 }
