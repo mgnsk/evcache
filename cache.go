@@ -190,7 +190,7 @@ func (c *Cache) Evict(key interface{}) {
 		if !ok {
 			return
 		}
-		if c.ring.Remove(r.ring) != key {
+		if k := c.ring.Remove(r.ring); k != nil && k != key {
 			panic("evcache: invalid ring")
 		}
 		r.wg.Wait()

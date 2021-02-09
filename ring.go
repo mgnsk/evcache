@@ -3,7 +3,6 @@ package evcache
 import (
 	"container/ring"
 	"sync"
-	"sync/atomic"
 )
 
 type lfuRing struct {
@@ -23,12 +22,14 @@ func newLFURing(capacity uint32) *lfuRing {
 }
 
 func (l *lfuRing) Len() int {
-	return int(atomic.LoadUint32(&l.size))
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return int(l.size)
 }
 
 // Push inserts a key as most frequently used. If capacity is exceeded,
-// the least frequently used key is returned.
-func (l *lfuRing) Push(key interface{}, r *ring.Ring) (lfu interface{}) {
+// the least frequently used element is removed and its key returned.
+func (l *lfuRing) Push(key interface{}, r *ring.Ring) (lfuKey interface{}) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	r.Value = key
@@ -36,31 +37,35 @@ func (l *lfuRing) Push(key interface{}, r *ring.Ring) (lfu interface{}) {
 		l.cursor.Link(r)
 	}
 	l.cursor = r
-	size := atomic.AddUint32(&l.size, 1)
-	if l.capacity > 0 && size > l.capacity {
-		lfuring := l.cursor.Next()
-		return lfuring.Value
+	l.size++
+	if l.capacity > 0 && l.size > l.capacity {
+		return l.unlink(l.cursor.Next())
 	}
 	return nil
 }
 
-// Remove an existing element.
+// Remove an element.
 func (l *lfuRing) Remove(r *ring.Ring) (key interface{}) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if r == r.Next() && r != l.cursor {
+		// A single ring element not belonging to lfuRing.
+		return nil
+	}
 	return l.unlink(r)
 }
 
+// Promote moves element towards cursor by at most hits positions.
 func (l *lfuRing) Promote(r *ring.Ring, hits uint32) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.cursor == nil {
 		panic("evcache: cursor must not be nil")
 	}
-	target := r
-	if target == target.Next() {
+	if r == r.Next() {
 		return
 	}
+	target := r
 	for i := uint32(0); i < hits; i++ {
 		next := target.Next()
 		target = next
@@ -87,8 +92,11 @@ func (l *lfuRing) unlink(r *ring.Ring) (key interface{}) {
 	if r.Prev().Unlink(1) != r {
 		panic("evcache: invalid ring")
 	}
-	if size := atomic.AddUint32(&l.size, ^uint32(0)); size == 0 {
+	l.size--
+	if l.size == 0 {
 		l.cursor = nil
 	}
-	return r.Value
+	key = r.Value
+	r.Value = nil
+	return key
 }
