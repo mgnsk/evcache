@@ -11,7 +11,8 @@ import (
 // SyncInterval is the interval for background loop.
 //
 // If cache overflows and records are created faster than
-// SyncInterval, the LFU eviction starts losing order.
+// SyncInterval, the LFU eviction starts approaching
+// the insertion order with eldest first.
 var SyncInterval = time.Second
 
 // FetchCallback is called when *Cache.Fetch has a miss

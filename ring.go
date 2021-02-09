@@ -33,11 +33,7 @@ func (l *lfuRing) Push(key interface{}, r *ring.Ring) (lfuKey interface{}) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	r.Value = key
-	if l.cursor != nil {
-		l.cursor.Link(r)
-	}
-	l.cursor = r
-	l.size++
+	l.link(r)
 	if l.capacity > 0 && l.size > l.capacity {
 		lfuKey = l.unlink(l.cursor.Next())
 		if lfuKey == key {
@@ -69,10 +65,43 @@ func (l *lfuRing) Promote(r *ring.Ring, hits uint32) {
 		// but the record not yet evicted.
 		return
 	}
+	l.move(r, hits)
+}
+
+func (l *lfuRing) link(r *ring.Ring) {
+	if l.cursor != nil {
+		l.cursor.Link(r)
+	}
+	l.cursor = r
+	l.size++
+}
+
+func (l *lfuRing) unlink(r *ring.Ring) (key interface{}) {
 	if l.cursor == nil {
-		panic("evcache: cursor must not be nil")
+		panic("evcache: invalid cursor")
 	}
 	if r == r.Next() {
+		if r != l.cursor {
+			panic("evcache: invalid ring")
+		}
+		l.cursor = nil
+	} else if r == l.cursor {
+		l.cursor = r.Prev()
+	}
+	if r.Prev().Unlink(1) != r {
+		panic("evcache: invalid ring")
+	}
+	l.size--
+	key = r.Value
+	r.Value = nil
+	return key
+}
+
+func (l *lfuRing) move(r *ring.Ring, hits uint32) {
+	if l.cursor == nil {
+		panic("evcache: invalid cursor")
+	}
+	if r == r.Next() || r == l.cursor {
 		return
 	}
 	target := r
@@ -86,26 +115,4 @@ func (l *lfuRing) Promote(r *ring.Ring, hits uint32) {
 		panic("evcache: invalid ring")
 	}
 	target.Link(r)
-}
-
-func (l *lfuRing) unlink(r *ring.Ring) (key interface{}) {
-	if r.Value == nil {
-		panic("evcache: r.Value must not be nil")
-	}
-	if l.cursor == nil {
-		panic("evcache: cursor must not be nil")
-	}
-	if l.cursor == r {
-		l.cursor = l.cursor.Prev()
-	}
-	if r.Prev().Unlink(1) != r {
-		panic("evcache: invalid ring")
-	}
-	l.size--
-	if l.size == 0 {
-		l.cursor = nil
-	}
-	key = r.Value
-	r.Value = nil
-	return key
 }
