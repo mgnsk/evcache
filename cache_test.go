@@ -190,9 +190,7 @@ var _ = Describe("eviction callback", func() {
 		closer.Close()
 		Expect(<-evicted).To(Equal(uint64(1)))
 
-		Eventually(func() int {
-			return c.Len()
-		}).Should(BeZero())
+		Expect(c.Len()).To(BeZero())
 	})
 })
 
@@ -290,22 +288,9 @@ var _ = Describe("overflow when setting values", func() {
 			Build()
 	})
 
-	When("Set causes an overflow", func() {
-		Specify("eventually overflowed records are evicted", func() {
-			for i := 0; i < n+overflow; i++ {
-				_, closer, _ := c.Fetch(i, 0, func() (interface{}, error) {
-					return nil, nil
-				})
-				closer.Close()
-				Expect(c.Len()).To(BeNumerically("<=", n+overflow))
-			}
-
-			c.Close()
-			Expect(c.Len()).To(BeZero())
-			Eventually(func() uint64 {
-				return atomic.LoadUint64(&evicted)
-			}).Should(Equal(uint64(n + overflow)))
-		})
+	AfterEach(func() {
+		c.Close()
+		Expect(c.Len()).To(BeZero())
 	})
 
 	When("Fetch causes an overflow", func() {
@@ -318,11 +303,9 @@ var _ = Describe("overflow when setting values", func() {
 				Expect(c.Len()).To(BeNumerically("<=", n+overflow))
 			}
 
-			c.Close()
-			Expect(c.Len()).To(BeZero())
 			Eventually(func() uint64 {
 				return atomic.LoadUint64(&evicted)
-			}).Should(Equal(uint64(n + overflow)))
+			}).Should(Equal(uint64(overflow)))
 		})
 	})
 
@@ -351,24 +334,15 @@ var _ = Describe("overflow when setting values", func() {
 					}()
 
 					cb(i)
-					overflow := c.Len() - n
-					Expect(overflow).To(BeNumerically("<=", concurrency+1), "overflow cannot exceed concurrency+1")
-
-					// Randomly evict keys.
-					if rand.Float64() < 0.6 {
-						c.Evict(rand.Intn(i + 1))
-					}
+					Expect(c.Len()).To(BeNumerically("<=", n), "capacity cannot be exceeded")
 				}()
 			}
 
 			wg.Wait()
 
-			c.Close()
-			Expect(c.Len()).To(BeZero())
-
 			Eventually(func() uint64 {
 				return atomic.LoadUint64(&evicted)
-			}).Should(Equal(uint64(n + overflow)))
+			}).Should(Equal(uint64(overflow)))
 		},
 		Entry(
 			"Fetch",
