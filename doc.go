@@ -1,4 +1,4 @@
 /*
-Package evcache provides a non-blocking eventually consistent LFU cache.
+Package evcache provides an eventually consistent ordered cache.
 */
 package evcache
