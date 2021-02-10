@@ -36,6 +36,7 @@ type Cache struct {
 	records    sync.Map
 	pool       sync.Pool
 	wg         sync.WaitGroup
+	mu         sync.RWMutex
 	ring       *lfuRing
 	afterEvict EvictionCallback
 	quit       chan struct{}
@@ -66,7 +67,6 @@ func New() Builder {
 func (build Builder) WithEvictionCallback(cb EvictionCallback) Builder {
 	return func(c *Cache) {
 		build(c)
-
 		c.afterEvict = cb
 	}
 }
@@ -80,7 +80,6 @@ func (build Builder) WithEvictionCallback(cb EvictionCallback) Builder {
 func (build Builder) WithCapacity(capacity uint32) Builder {
 	return func(c *Cache) {
 		build(c)
-
 		c.ring = newLFURing(capacity)
 	}
 }
@@ -89,11 +88,7 @@ func (build Builder) WithCapacity(capacity uint32) Builder {
 func (build Builder) Build() *Cache {
 	c := &Cache{}
 	build(c)
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
-		c.runLoop()
-	}()
+	go c.runLoop()
 	return c
 }
 
@@ -122,7 +117,8 @@ func (c *Cache) Get(key interface{}) (value interface{}, closer io.Closer, exist
 // When the returned value is not used anymore, the caller MUST call closer.Close()
 // or a memory leak will occur.
 func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (value interface{}, closer io.Closer, err error) {
-	loadOrStore := func(r *record) (old *record, loaded bool) {
+	r := c.pool.Get().(*record)
+	loadOrStore := func() (old *record, loaded bool) {
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		if old, loaded := c.records.LoadOrStore(key, r); loaded {
@@ -130,7 +126,11 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 		}
 		value, err = f()
 		if err != nil {
-			c.Evict(key)
+			// Lock to prevent someone from evicting the key
+			// and making sure we delete r and only r.
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			c.deleteIfEquals(key, r)
 			return nil, false
 		}
 		r.init(value, ttl)
@@ -139,9 +139,8 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 		}
 		return nil, false
 	}
-	r := c.pool.Get().(*record)
 	for {
-		old, loaded := loadOrStore(r)
+		old, loaded := loadOrStore()
 		if err != nil {
 			c.pool.Put(r)
 			return nil, nil, err
@@ -158,16 +157,19 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 
 // Evict a key.
 func (c *Cache) Evict(key interface{}) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	value, loaded := c.records.LoadAndDelete(key)
 	if !loaded {
 		return
 	}
+	r := value.(*record)
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
-		r := value.(*record)
-		value, ok := r.LoadAndDelete()
-		if !ok {
+		value, loaded := r.LoadAndReset()
+		if !loaded {
+			// An inactive record which had a concurrent Fetch and failed.
 			return
 		}
 		if k := c.ring.Remove(r.ring); k != nil && k != key {
@@ -226,11 +228,25 @@ func (c *Cache) Len() int {
 // It is not safe to close the cache
 // while in use.
 func (c *Cache) Close() error {
+	c.quit <- struct{}{}
 	close(c.quit)
-	c.wg.Wait()
 	c.Flush()
 	c.wg.Wait()
 	return nil
+}
+
+func (c *Cache) deleteIfEquals(key interface{}, r *record) {
+	new, loaded := c.records.Load(key)
+	if !loaded {
+		return
+	}
+	if new.(*record) != r {
+		return
+	}
+	new, loaded = c.records.LoadAndDelete(key)
+	if loaded && new.(*record) != r {
+		panic("evcache: inconsistent map state")
+	}
 }
 
 func (c *Cache) runLoop() {

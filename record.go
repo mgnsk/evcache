@@ -43,7 +43,7 @@ func (r *record) Load() (interface{}, bool) {
 	return r.value, true
 }
 
-func (r *record) LoadAndDelete() (interface{}, bool) {
+func (r *record) LoadAndReset() (interface{}, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if !atomic.CompareAndSwapUint32(&r.state, stateActive, stateInactive) {
