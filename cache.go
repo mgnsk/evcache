@@ -301,7 +301,11 @@ func (c *Cache) processRecords(now int64) {
 			return true
 		}
 		if r.expires > 0 && r.expires < now {
-			c.Evict(key)
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			if c.deleteIfEqualsLocked(key, r) {
+				c.finalizeAsync(key, r)
+			}
 		} else if hits := atomic.SwapUint32(&r.hits, 0); hits > 0 {
 			c.ring.Promote(r.ring, hits)
 		}
