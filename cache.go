@@ -157,8 +157,8 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 
 // Evict a key.
 func (c *Cache) Evict(key interface{}) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	value, loaded := c.records.LoadAndDelete(key)
 	if !loaded {
 		return

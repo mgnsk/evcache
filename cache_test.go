@@ -327,11 +327,13 @@ var _ = Describe("eviction callback", func() {
 		Expect(c.Len()).To(BeZero())
 	})
 
-	When("Evict is called concurrently with fetch callback", func() {
+	When("record is evicted concurrently with fetch callback", func() {
 		Specify("eviction callback waits for fetch to finish", func() {
 			value, closer, _ := c.Fetch("key", 0, func() (interface{}, error) {
-				// Key can now be evicted but shouldn't until we return.
 				c.Evict("key")
+				_, _, exists := c.Get("key")
+				Expect(exists).To(BeFalse())
+				// Key can now be evicted but shouldn't until we return.
 				select {
 				case <-evicted:
 					Fail("did not expect evicted")
@@ -343,16 +345,8 @@ var _ = Describe("eviction callback", func() {
 			closer.Close()
 			Expect(value).To(Equal(uint64(0)))
 
-			// We still issued an Evict.
-			// The fetch might have gotten a chance to init
-			// the record before Evict's goroutine got to it
-			// or it might have not.
-			if c.Len() == 1 {
-				Expect(<-evicted).To(Equal(uint64(0)))
-			}
-			Eventually(func() int {
-				return c.Len()
-			}).Should(BeZero())
+			// Eviction callback waited until Fetch returned a new value.
+			Expect(<-evicted).To(Equal(uint64(0)))
 
 			c.Close()
 			Expect(c.Len()).To(BeZero())
@@ -396,16 +390,16 @@ var _ = Describe("Fetch fails with an error", func() {
 		Expect(c.Len()).To(BeZero())
 	})
 
-	When("Evict and Fetch are called concurrently with fetch callback", func() {
-		Specify("the second record will win", func() {
-			c.Evict("key")
+	When("record is evicted concurrently with fetch callback", func() {
+		Specify("failed fetch will not overwrite succeeded one", func() {
 			_, _, err := c.Fetch("key", 0, func() (interface{}, error) {
 				c.Evict("key")
-				_, closer, err := c.Fetch("key", 0, func() (interface{}, error) {
+				v, closer, err := c.Fetch("key", 0, func() (interface{}, error) {
 					return "second value", nil
 				})
 				Expect(err).To(BeNil())
 				closer.Close()
+				Expect(v).To(Equal("second value"))
 
 				return nil, errFetch
 			})
@@ -485,6 +479,7 @@ var _ = Describe("ranging over values", func() {
 
 		c.Range(func(key, value interface{}) bool {
 			Expect(key).To(Equal("key"))
+			Expect(value).To(Equal("value"))
 			Expect(<-evicted).To(Equal("key"))
 			Expect(c.Len()).To(BeZero())
 			return true
@@ -497,8 +492,8 @@ var _ = Describe("ranging over values", func() {
 
 var _ = Describe("overflow when setting values", func() {
 	var (
-		n        = 10
-		overflow = 5
+		n        = 100
+		overflow = 100
 		evicted  uint64
 		c        *evcache.Cache
 	)
