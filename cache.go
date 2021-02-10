@@ -163,10 +163,10 @@ func (c *Cache) Evict(key interface{}) {
 	if !loaded {
 		return
 	}
-	r := value.(*record)
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
+		r := value.(*record)
 		value, loaded := r.LoadAndReset()
 		if !loaded {
 			// An inactive record which had a concurrent Fetch and failed.
@@ -236,15 +236,15 @@ func (c *Cache) Close() error {
 }
 
 func (c *Cache) deleteIfEquals(key interface{}, r *record) {
-	new, loaded := c.records.Load(key)
+	old, loaded := c.records.Load(key)
 	if !loaded {
 		return
 	}
-	if new.(*record) != r {
+	if old.(*record) != r {
 		return
 	}
-	new, loaded = c.records.LoadAndDelete(key)
-	if loaded && new.(*record) != r {
+	old, loaded = c.records.LoadAndDelete(key)
+	if loaded && old.(*record) != r {
 		panic("evcache: inconsistent map state")
 	}
 }
