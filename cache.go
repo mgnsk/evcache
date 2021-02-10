@@ -8,11 +8,12 @@ import (
 	"time"
 )
 
-// SyncInterval is the interval for background loop.
+// SyncInterval is the interval for background loop
+// for autoexpiry and optional eventual LFU eviction ordering.
 //
-// If cache overflows and records are created faster than
-// SyncInterval, the LFU eviction starts approaching
-// the insertion order with eldest first.
+// If cache overflows while LFU is enabled and records are created faster than
+// SyncInterval can update record ordering, the eviction starts losing LFU order
+// and will become the insertion order with eldest first.
 var SyncInterval = time.Second
 
 // FetchCallback is called when *Cache.Fetch has a miss
@@ -29,7 +30,9 @@ type FetchCallback func() (interface{}, error)
 // are closed.
 type EvictionCallback func(key, value interface{})
 
-// Cache is an eventually consistent LFU cache.
+// Cache is an eventually consistent ordered cache.
+//
+// By default, records are sorted by insertion order.
 //
 // All methods except Close are safe to use concurrently.
 type Cache struct {
@@ -37,9 +40,10 @@ type Cache struct {
 	pool       sync.Pool
 	wg         sync.WaitGroup
 	mu         sync.RWMutex
-	ring       *lfuRing
+	lfuEnabled bool
+	list       *List
 	afterEvict EvictionCallback
-	quit       chan struct{}
+	stopLoop   chan struct{}
 }
 
 // Builder builds a cache.
@@ -52,15 +56,7 @@ type Builder func(*Cache)
 //
 // It is not safe to close the cache while in use.
 func New() Builder {
-	return func(c *Cache) {
-		c.pool = sync.Pool{
-			New: func() interface{} {
-				return &record{ring: ring.New(1)}
-			},
-		}
-		c.ring = newLFURing(0)
-		c.quit = make(chan struct{})
-	}
+	return func(c *Cache) {}
 }
 
 // WithEvictionCallback specifies an asynchronous eviction callback.
@@ -72,22 +68,43 @@ func (build Builder) WithEvictionCallback(cb EvictionCallback) Builder {
 }
 
 // WithCapacity configures the cache with specified capacity.
-// If cache exceeds the limit, the least frequently used
-// record is evicted.
 //
-// New records are inserted as the most frequently used to
-// reduce premature eviction of new but unused records.
+// If cache exceeds the limit, the eldest record is evicted.
 func (build Builder) WithCapacity(capacity uint32) Builder {
 	return func(c *Cache) {
 		build(c)
-		c.ring = newLFURing(capacity)
+		c.list = NewList(capacity)
+	}
+}
+
+// WithLFU enables the near-LFU eviction order of records.
+//
+// New records are inserted as the most frequently used to
+// reduce premature eviction of new but unused records.
+func (build Builder) WithLFU() Builder {
+	return func(c *Cache) {
+		build(c)
+		if c.list == nil {
+			panic("evcache: WithLFU requires WithCapacity")
+		}
+		c.lfuEnabled = true
 	}
 }
 
 // Build the cache.
 func (build Builder) Build() *Cache {
-	c := &Cache{}
+	c := &Cache{
+		pool: sync.Pool{
+			New: func() interface{} {
+				return &record{ring: ring.New(1)}
+			},
+		},
+		stopLoop: make(chan struct{}),
+	}
 	build(c)
+	if c.list == nil {
+		c.list = NewList(0)
+	}
 	go c.runLoop()
 	return c
 }
@@ -99,14 +116,13 @@ func (build Builder) Build() *Cache {
 // or a memory leak will occur.
 func (c *Cache) Get(key interface{}) (value interface{}, closer io.Closer, exists bool) {
 	for {
-		old, ok := c.records.Load(key)
+		r, ok := c.records.Load(key)
 		if !ok {
 			return nil, nil, false
 		}
-		oldrec := old.(*record)
-		value, exists = oldrec.Load()
+		value, exists = r.(*record).LoadAndHit()
 		if exists {
-			return value, oldrec, true
+			return value, r.(io.Closer), true
 		}
 	}
 }
@@ -120,8 +136,8 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 		old, loaded := c.records.LoadOrStore(key, r)
 		if !loaded {
 			r.init(value, ttl)
-			if lfu := c.ring.Push(key, r.ring); lfu != nil {
-				c.Evict(lfu)
+			if front := c.list.PushBack(key, r.ring); front != nil {
+				c.Evict(front)
 			}
 			return
 		}
@@ -155,9 +171,9 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 			c.deleteIfEqualsLocked(key, r)
 			return nil, false
 		}
-		r.initAndLoad(value, ttl)
-		if lfu := c.ring.Push(key, r.ring); lfu != nil {
-			c.Evict(lfu)
+		r.initAndHit(value, ttl)
+		if front := c.list.PushBack(key, r.ring); front != nil {
+			c.Evict(front)
 		}
 		return nil, false
 	}
@@ -170,15 +186,15 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 		if !loaded {
 			return value, r, nil
 		}
-		if v, loaded := old.Load(); loaded {
+		if v, loaded := old.LoadAndHit(); loaded {
 			c.pool.Put(r)
 			return v, old, nil
 		}
 	}
 }
 
-// Range calls f sequentially for each key and value present in the cache.
-// If f returns false, range stops the iteration.
+// Range calls f for each key and value present in the cache in no particular order.
+// If f returns false, Range stops the iteration.
 //
 // Range does not necessarily correspond to any consistent snapshot of the cache's
 // contents: no key will be visited more than once, but if the value for any key
@@ -203,6 +219,31 @@ func (c *Cache) Range(f func(key, value interface{}) bool) {
 	})
 }
 
+// OrderedRange calls f sequentially for each key and value present in the cache
+// in order. If f returns false, Range stops the iteration.
+// When LFU is used, the order is from least to most frequently used,
+// otherwise it is the insertion order with eldest first by default.
+//
+// It is not safe to use OrderedRange concurrently with any other method.
+func (c *Cache) OrderedRange(f func(key, value interface{}) bool) {
+	c.stopLoop <- struct{}{}
+	c.wg.Wait()
+	defer func() {
+		go c.runLoop()
+	}()
+	c.list.Do(func(key interface{}) bool {
+		r, ok := c.records.Load(key)
+		if !ok {
+			return true
+		}
+		value, ok := r.(*record).Load()
+		if !ok {
+			return true
+		}
+		return f(key, value)
+	})
+}
+
 // Evict a key.
 func (c *Cache) Evict(key interface{}) {
 	c.mu.RLock()
@@ -224,7 +265,7 @@ func (c *Cache) Flush() {
 
 // Len returns the number of keys in the cache.
 func (c *Cache) Len() int {
-	return c.ring.Len()
+	return c.list.Len()
 }
 
 // Close shuts down the cache, evicts all keys
@@ -233,8 +274,8 @@ func (c *Cache) Len() int {
 // It is not safe to close the cache
 // while in use.
 func (c *Cache) Close() error {
-	c.quit <- struct{}{}
-	close(c.quit)
+	c.stopLoop <- struct{}{}
+	close(c.stopLoop)
 	c.Flush()
 	c.wg.Wait()
 	return nil
@@ -264,7 +305,7 @@ func (c *Cache) finalizeAsync(key interface{}, r *record) {
 			// An inactive record which had a concurrent Fetch and failed.
 			return
 		}
-		if k := c.ring.Remove(r.ring); k != nil && k != key {
+		if k := c.list.Remove(r.ring); k != nil && k != key {
 			panic("evcache: invalid ring")
 		}
 		r.wg.Wait()
@@ -280,7 +321,7 @@ func (c *Cache) runLoop() {
 	defer ticker.Stop()
 	for {
 		select {
-		case <-c.quit:
+		case <-c.stopLoop:
 			return
 		case now := <-ticker.C:
 			c.processRecords(now.UnixNano())
@@ -305,8 +346,13 @@ func (c *Cache) processRecords(now int64) {
 			if c.deleteIfEqualsLocked(key, r) {
 				c.finalizeAsync(key, r)
 			}
-		} else if hits := atomic.SwapUint32(&r.hits, 0); hits > 0 {
-			c.ring.Promote(r.ring, hits)
+			return true
+		}
+		if !c.lfuEnabled {
+			return true
+		}
+		if hits := atomic.SwapUint32(&r.hits, 0); hits > 0 {
+			c.list.MoveForward(r.ring, hits)
 		}
 		return true
 	})

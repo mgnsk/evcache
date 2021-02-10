@@ -38,6 +38,15 @@ func (r *record) Load() (interface{}, bool) {
 	if !r.IsActive() {
 		return nil, false
 	}
+	return r.value, true
+}
+
+func (r *record) LoadAndHit() (interface{}, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if !r.IsActive() {
+		return nil, false
+	}
 	r.wg.Add(1)
 	atomic.AddUint32(&r.hits, 1)
 	return r.value, true
@@ -66,7 +75,7 @@ func (r *record) init(value interface{}, ttl time.Duration) {
 	}
 }
 
-func (r *record) initAndLoad(value interface{}, ttl time.Duration) {
+func (r *record) initAndHit(value interface{}, ttl time.Duration) {
 	r.init(value, ttl)
 	r.hits = 1
 	r.wg.Add(1)
