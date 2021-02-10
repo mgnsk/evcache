@@ -111,6 +111,30 @@ func (c *Cache) Get(key interface{}) (value interface{}, closer io.Closer, exist
 	}
 }
 
+// Set a value in the cache for a key.
+func (c *Cache) Set(key interface{}, value interface{}, ttl time.Duration) {
+	r := c.pool.Get().(*record)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for {
+		old, loaded := c.records.LoadOrStore(key, r)
+		if !loaded {
+			r.init(value, ttl)
+			if lfu := c.ring.Push(key, r.ring); lfu != nil {
+				c.Evict(lfu)
+			}
+			return
+		}
+		func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			if c.deleteIfEqualsLocked(key, old.(*record)) {
+				c.finalizeAsync(key, old.(*record))
+			}
+		}()
+	}
+}
+
 // Fetch attempts to get or set the value and calls f on a miss to receive the new value.
 // If f returns an error, no value is cached and the error is returned back to caller.
 //
@@ -126,14 +150,12 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 		}
 		value, err = f()
 		if err != nil {
-			// Lock to prevent someone from evicting the key
-			// and making sure we delete r and only r.
 			c.mu.Lock()
 			defer c.mu.Unlock()
-			c.deleteIfEquals(key, r)
+			c.deleteIfEqualsLocked(key, r)
 			return nil, false
 		}
-		r.init(value, ttl)
+		r.initAndLoad(value, ttl)
 		if lfu := c.ring.Push(key, r.ring); lfu != nil {
 			c.Evict(lfu)
 		}
@@ -153,34 +175,6 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 			return v, old, nil
 		}
 	}
-}
-
-// Evict a key.
-func (c *Cache) Evict(key interface{}) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	value, loaded := c.records.LoadAndDelete(key)
-	if !loaded {
-		return
-	}
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
-		r := value.(*record)
-		value, loaded := r.LoadAndReset()
-		if !loaded {
-			// An inactive record which had a concurrent Fetch and failed.
-			return
-		}
-		if k := c.ring.Remove(r.ring); k != nil && k != key {
-			panic("evcache: invalid ring")
-		}
-		r.wg.Wait()
-		c.pool.Put(r)
-		if c.afterEvict != nil {
-			c.afterEvict(key, value)
-		}
-	}()
 }
 
 // Range calls f sequentially for each key and value present in the cache.
@@ -209,6 +203,17 @@ func (c *Cache) Range(f func(key, value interface{}) bool) {
 	})
 }
 
+// Evict a key.
+func (c *Cache) Evict(key interface{}) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	r, loaded := c.records.LoadAndDelete(key)
+	if !loaded {
+		return
+	}
+	c.finalizeAsync(key, r.(*record))
+}
+
 // Flush evicts all keys from the cache.
 func (c *Cache) Flush() {
 	c.records.Range(func(key, _ interface{}) bool {
@@ -235,18 +240,40 @@ func (c *Cache) Close() error {
 	return nil
 }
 
-func (c *Cache) deleteIfEquals(key interface{}, r *record) {
+// r.mu must be locked and also c.mu.
+func (c *Cache) deleteIfEqualsLocked(key interface{}, r *record) bool {
 	old, loaded := c.records.Load(key)
 	if !loaded {
-		return
+		return false
 	}
 	if old.(*record) != r {
-		return
+		return false
 	}
 	old, loaded = c.records.LoadAndDelete(key)
 	if loaded && old.(*record) != r {
 		panic("evcache: inconsistent map state")
 	}
+	return true
+}
+
+func (c *Cache) finalizeAsync(key interface{}, r *record) {
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		value, loaded := r.LoadAndReset()
+		if !loaded {
+			// An inactive record which had a concurrent Fetch and failed.
+			return
+		}
+		if k := c.ring.Remove(r.ring); k != nil && k != key {
+			panic("evcache: invalid ring")
+		}
+		r.wg.Wait()
+		c.pool.Put(r)
+		if c.afterEvict != nil {
+			c.afterEvict(key, value)
+		}
+	}()
 }
 
 func (c *Cache) runLoop() {

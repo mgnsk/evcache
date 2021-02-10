@@ -64,6 +64,10 @@ func (r *record) init(value interface{}, ttl time.Duration) {
 	if ttl > 0 {
 		r.expires = time.Now().Add(ttl).UnixNano()
 	}
+}
+
+func (r *record) initAndLoad(value interface{}, ttl time.Duration) {
+	r.init(value, ttl)
 	r.hits = 1
 	r.wg.Add(1)
 }
