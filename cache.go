@@ -1,7 +1,6 @@
 package evcache
 
 import (
-	"container/ring"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -41,7 +40,7 @@ type Cache struct {
 	wg         sync.WaitGroup
 	mu         sync.RWMutex
 	lfuEnabled bool
-	list       *List
+	list       *ringList
 	afterEvict EvictionCallback
 	stopLoop   chan struct{}
 }
@@ -73,7 +72,7 @@ func (build Builder) WithEvictionCallback(cb EvictionCallback) Builder {
 func (build Builder) WithCapacity(capacity uint32) Builder {
 	return func(c *Cache) {
 		build(c)
-		c.list = NewList(capacity)
+		c.list = newRingList(capacity)
 	}
 }
 
@@ -96,14 +95,14 @@ func (build Builder) Build() *Cache {
 	c := &Cache{
 		pool: sync.Pool{
 			New: func() interface{} {
-				return &record{ring: ring.New(1)}
+				return newRecord()
 			},
 		},
 		stopLoop: make(chan struct{}),
 	}
 	build(c)
 	if c.list == nil {
-		c.list = NewList(0)
+		c.list = newRingList(0)
 	}
 	go c.runLoop()
 	return c

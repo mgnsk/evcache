@@ -5,24 +5,24 @@ import (
 	"sync"
 )
 
-// List is a size-limited list using rings.
-type List struct {
+// ringList is a size-limited list using rings.
+type ringList struct {
 	mu       sync.RWMutex
 	back     *ring.Ring
 	size     uint32
 	capacity uint32
 }
 
-// NewList creates an empty list.
-func NewList(capacity uint32) *List {
-	l := &List{
+// newRingList creates an empty list.
+func newRingList(capacity uint32) *ringList {
+	l := &ringList{
 		capacity: capacity,
 	}
 	return l
 }
 
 // Len returns the length of elements in the ring.
-func (l *List) Len() int {
+func (l *ringList) Len() int {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	return int(l.size)
@@ -30,7 +30,7 @@ func (l *List) Len() int {
 
 // PushBack inserts a value at the back of list. If capacity is exceeded,
 // an element from the front of list is removed and its value returned.
-func (l *List) PushBack(value interface{}, r *ring.Ring) (front interface{}) {
+func (l *ringList) PushBack(value interface{}, r *ring.Ring) (front interface{}) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	r.Value = value
@@ -46,7 +46,7 @@ func (l *List) PushBack(value interface{}, r *ring.Ring) (front interface{}) {
 }
 
 // Remove an element from the list.
-func (l *List) Remove(r *ring.Ring) (value interface{}) {
+func (l *ringList) Remove(r *ring.Ring) (value interface{}) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if r.Value == nil {
@@ -56,7 +56,7 @@ func (l *List) Remove(r *ring.Ring) (value interface{}) {
 }
 
 // MoveForward moves element forward by at most delta positions.
-func (l *List) MoveForward(r *ring.Ring, delta uint32) {
+func (l *ringList) MoveForward(r *ring.Ring, delta uint32) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if r.Value == nil {
@@ -70,7 +70,7 @@ func (l *List) MoveForward(r *ring.Ring, delta uint32) {
 // Do calls function f on each element of the list, in forward order.
 // If f returns false, Do stops the iteration.
 // f must not change l.
-func (l *List) Do(f func(value interface{}) bool) {
+func (l *ringList) Do(f func(value interface{}) bool) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	if l.back == nil {
@@ -87,7 +87,7 @@ func (l *List) Do(f func(value interface{}) bool) {
 	}
 }
 
-func (l *List) link(r *ring.Ring) {
+func (l *ringList) link(r *ring.Ring) {
 	if l.back != nil {
 		l.back.Link(r)
 	}
@@ -95,7 +95,7 @@ func (l *List) link(r *ring.Ring) {
 	l.size++
 }
 
-func (l *List) unlink(r *ring.Ring) (key interface{}) {
+func (l *ringList) unlink(r *ring.Ring) (key interface{}) {
 	if l.back == nil {
 		panic("evcache: invalid cursor")
 	}
@@ -116,7 +116,7 @@ func (l *List) unlink(r *ring.Ring) (key interface{}) {
 	return key
 }
 
-func (l *List) move(r *ring.Ring, delta uint32) {
+func (l *ringList) move(r *ring.Ring, delta uint32) {
 	if l.back == nil {
 		panic("evcache: invalid cursor")
 	}
