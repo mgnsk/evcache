@@ -23,6 +23,10 @@ type record struct {
 	state   uint32
 }
 
+func newRecord() *record {
+	return &record{ring: ring.New(1)}
+}
+
 func (r *record) Close() error {
 	r.wg.Done()
 	return nil
