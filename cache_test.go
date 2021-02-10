@@ -394,7 +394,7 @@ var _ = Describe("eviction callback", func() {
 
 var _ = Describe("Fetch fails with an error", func() {
 	var (
-		n        = 1000
+		n        = 100
 		errFetch error
 		wg       sync.WaitGroup
 		c        *evcache.Cache
@@ -528,6 +528,35 @@ var _ = Describe("ranging over values", func() {
 	})
 })
 
+var _ = Describe("ordered range", func() {
+	var (
+		n = 10
+		c *evcache.Cache
+	)
+
+	BeforeEach(func() {
+		c = evcache.New().Build()
+		for i := 0; i < n; i++ {
+			c.Set(i, i, 0)
+		}
+		Expect(c.Len()).To(Equal(n))
+	})
+
+	Specify("OrderedRange is ordered", func() {
+		var keys []int
+		c.OrderedRange(func(key, value interface{}) bool {
+			Expect(value).To(Equal(key))
+			keys = append(keys, key.(int))
+			return true
+		})
+		Expect(keys).To(HaveLen(n))
+		Expect(sort.IntsAreSorted(keys)).To(BeTrue())
+
+		c.Close()
+		Expect(c.Len()).To(BeZero())
+	})
+})
+
 var _ = Describe("overflow when setting values", func() {
 	var (
 		n        = 100
@@ -640,28 +669,13 @@ var _ = Describe("overflow when setting values", func() {
 	)
 })
 
-var _ = Describe("eventual overflow eviction order", func() {
+var _ = Describe("overflow eviction order", func() {
 	var (
 		n           = 10
 		key         uint64
 		evictedKeys chan uint64
 		c           *evcache.Cache
-	)
-
-	BeforeEach(func() {
-		evictedKeys = make(chan uint64, n)
-		key = 0
-		c = evcache.New().
-			WithEvictionCallback(func(key, _ interface{}) {
-				defer GinkgoRecover()
-				evictedKeys <- key.(uint64)
-			}).
-			WithCapacity(uint32(n)).
-			Build()
-	})
-
-	When("records have different popularity", func() {
-		warmup := func() {
+		warmup      = func() {
 			for i := 1; i <= n; i++ {
 				k := atomic.AddUint64(&key, 1)
 				_, closer, _ := c.Fetch(k, 0, func() (interface{}, error) {
@@ -678,8 +692,7 @@ var _ = Describe("eventual overflow eviction order", func() {
 				}
 			}
 		}
-
-		overflow := func() (keys []int) {
+		overflow = func() (keys []int) {
 			for i := 0; i < n; i++ {
 				// Overflow the cache and catch the evicted keys.
 				k := atomic.AddUint64(&key, 1)
@@ -692,20 +705,64 @@ var _ = Describe("eventual overflow eviction order", func() {
 			}
 			return keys
 		}
+	)
 
-		Specify("the eviction order is almost sorted by key hit count", func() {
-			warmup()
+	BeforeEach(func() {
+		evictedKeys = make(chan uint64, n)
+		key = 0
+	})
 
-			time.Sleep(2 * evcache.SyncInterval)
+	Context("LFU disabled", func() {
+		BeforeEach(func() {
+			c = evcache.New().
+				WithEvictionCallback(func(key, _ interface{}) {
+					defer GinkgoRecover()
+					evictedKeys <- key.(uint64)
+				}).
+				WithCapacity(uint32(n)).
+				Build()
+		})
 
-			keys := overflow()
-			fmt.Printf("near-decreasing order: %v\n", keys)
+		When("records have different popularity", func() {
+			Specify("the eviction order is sorted by eldest keys first", func() {
+				warmup()
+				keys := overflow()
 
-			sortedness := calcSortedness(sort.Reverse(sort.IntSlice(keys)))
-			fmt.Printf("reverse-sortedness: %f\n", sortedness)
+				Expect(sort.IntsAreSorted(keys)).To(BeTrue())
 
-			c.Close()
-			Expect(c.Len()).To(BeZero())
+				c.Close()
+				Expect(c.Len()).To(BeZero())
+			})
+		})
+	})
+
+	Context("LFU enabled", func() {
+		BeforeEach(func() {
+			c = evcache.New().
+				WithEvictionCallback(func(key, _ interface{}) {
+					defer GinkgoRecover()
+					evictedKeys <- key.(uint64)
+				}).
+				WithCapacity(uint32(n)).
+				WithLFU().
+				Build()
+		})
+
+		When("records have different popularity", func() {
+			Specify("the eviction order is almost sorted LFU keys first", func() {
+				warmup()
+
+				time.Sleep(2 * evcache.SyncInterval)
+
+				keys := overflow()
+				fmt.Printf("near-decreasing order of LFU keys: %v\n", keys)
+
+				sortedness := calcSortedness(sort.Reverse(sort.IntSlice(keys)))
+				fmt.Printf("reverse-sortedness: %f\n", sortedness)
+
+				c.Close()
+				Expect(c.Len()).To(BeZero())
+			})
 		})
 	})
 })
