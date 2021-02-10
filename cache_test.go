@@ -23,6 +23,44 @@ var _ = BeforeSuite(func() {
 	evcache.SyncInterval = 10 * time.Millisecond
 })
 
+var _ = Describe("setting values", func() {
+	var (
+		evicted chan interface{}
+		c       *evcache.Cache
+	)
+
+	BeforeEach(func() {
+		evicted = make(chan interface{}, 2)
+		c = evcache.New().
+			WithEvictionCallback(func(key, _ interface{}) {
+				defer GinkgoRecover()
+				select {
+				case evicted <- key:
+				default:
+					Fail("expected only 2 evictions")
+				}
+			}).
+			Build()
+	})
+
+	When("key exists", func() {
+		BeforeEach(func() {
+			c.Set("key", 0, 0)
+			Expect(c.Len()).To(Equal(1))
+		})
+
+		Specify("value is replaced", func() {
+			c.Set("key", 1, 0)
+			Eventually(func() int {
+				return c.Len()
+			}).Should(Equal(1))
+
+			c.Close()
+			Expect(c.Len()).To(BeZero())
+		})
+	})
+})
+
 var _ = Describe("fetching values", func() {
 	var (
 		evicted chan interface{}
@@ -509,6 +547,22 @@ var _ = Describe("overflow when setting values", func() {
 			Build()
 	})
 
+	When("Set causes an overflow", func() {
+		Specify("eventually overflowed records are evicted", func() {
+			for i := 0; i < n+overflow; i++ {
+				c.Set(i, 0, 0)
+				Expect(c.Len()).To(BeNumerically("<=", n), "capacity cannot be exceeded")
+			}
+
+			Eventually(func() uint64 {
+				return atomic.LoadUint64(&evicted)
+			}).Should(Equal(uint64(overflow)))
+
+			c.Close()
+			Expect(c.Len()).To(BeZero())
+		})
+	})
+
 	When("Fetch causes an overflow", func() {
 		Specify("eventually overflowed records are evicted", func() {
 			for i := 0; i < n+overflow; i++ {
@@ -575,6 +629,12 @@ var _ = Describe("overflow when setting values", func() {
 				Expect(err).To(BeNil())
 				Expect(value).To(Equal("value"))
 				closer.Close()
+			},
+		),
+		Entry(
+			"Set",
+			func(i int) {
+				c.Set(i, "value", 0)
 			},
 		),
 	)
