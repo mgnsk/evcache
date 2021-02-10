@@ -240,7 +240,6 @@ func (c *Cache) Close() error {
 	return nil
 }
 
-// r.mu must be locked and also c.mu.
 func (c *Cache) deleteIfEqualsLocked(key interface{}, r *record) bool {
 	old, loaded := c.records.Load(key)
 	if !loaded {
