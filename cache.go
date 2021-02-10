@@ -112,7 +112,7 @@ func (c *Cache) Get(key interface{}) (value interface{}, closer io.Closer, exist
 }
 
 // Set a value in the cache for a key.
-func (c *Cache) Set(key interface{}, value interface{}, ttl time.Duration) {
+func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 	r := c.pool.Get().(*record)
 	r.mu.Lock()
 	defer r.mu.Unlock()
