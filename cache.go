@@ -345,7 +345,7 @@ func (c *Cache) processRecords(now int64) {
 		if !r.IsActive() {
 			return true
 		}
-		if r.expires > 0 && r.expires < now {
+		if r.expired(now) {
 			c.mu.Lock()
 			defer c.mu.Unlock()
 			if c.deleteIfEqualsLocked(key, r) {

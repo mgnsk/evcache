@@ -84,3 +84,7 @@ func (r *record) initAndHit(value interface{}, ttl time.Duration) {
 	r.hits = 1
 	r.wg.Add(1)
 }
+
+func (r *record) expired(now int64) bool {
+	return r.expires > 0 && r.expires < now
+}

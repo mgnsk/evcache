@@ -161,6 +161,12 @@ var _ = Describe("Fetch callback", func() {
 
 		Specify("Exists will not block and returns false", func() {
 			Expect(c.Exists("key")).To(BeFalse())
+			close(valueCh)
+
+			wg.Wait()
+
+			c.Close()
+			Expect(c.Len()).To(BeZero())
 		})
 
 		Specify("Get blocks", func() {
@@ -213,12 +219,7 @@ var _ = Describe("Fetch callback", func() {
 
 		Specify("autoexpiry keeps working", func() {
 			// Verify other keys can expire.
-			v, closer, err := c.Fetch("key1", 4*evcache.SyncInterval, func() (interface{}, error) {
-				return "value1", nil
-			})
-			Expect(err).To(BeNil())
-			closer.Close()
-			Expect(v).To(Equal("value1"))
+			c.Set("key1", "value1", 4*evcache.SyncInterval)
 			Expect(c.Len()).To(Equal(1))
 
 			Expect(<-evicted).To(Equal("key1"))
@@ -242,12 +243,7 @@ var _ = Describe("Fetch callback", func() {
 		})
 
 		Specify("Range skips the blocking key", func() {
-			v, closer, err := c.Fetch("key1", 0, func() (interface{}, error) {
-				return "value1", nil
-			})
-			Expect(err).To(BeNil())
-			closer.Close()
-			Expect(v).To(Equal("value1"))
+			c.Set("key1", "value1", 0)
 			Expect(c.Len()).To(Equal(1))
 
 			n := 0
@@ -279,15 +275,13 @@ var _ = Describe("deleting values", func() {
 	When("value exists", func() {
 		Specify("it is evicted", func() {
 			// Stores are synchronous.
-			_, closer, _ := c.Fetch("key", 0, func() (interface{}, error) {
-				return "value", nil
-			})
-			closer.Close()
+			c.Set("key", "value", 0)
 			Expect(c.Len()).To(Equal(1))
 
 			c.Evict("key")
 			Expect(c.Exists("key")).To(BeFalse())
-			// Evicts are asynchronous.
+			// Evicts are synchronous for the map
+			// but asynchronous for the list.
 			Eventually(func() int {
 				return c.Len()
 			}).Should(BeZero())
@@ -307,10 +301,7 @@ var _ = Describe("flushing the cache", func() {
 
 	When("the cache is flushed", func() {
 		Specify("all records are evicted", func() {
-			_, closer, _ := c.Fetch("key", 0, func() (interface{}, error) {
-				return "value", nil
-			})
-			closer.Close()
+			c.Set("key", "value", 0)
 			Expect(c.Len()).To(Equal(1))
 
 			c.Flush()
@@ -512,20 +503,30 @@ var _ = Describe("ranging over values", func() {
 	})
 
 	Specify("callback does not block record", func() {
-		_, closer, _ := c.Fetch("key", 100*time.Millisecond, func() (interface{}, error) {
-			return "value", nil
-		})
-		closer.Close()
+		c.Set("key", "value", 0)
 		Expect(c.Len()).To(Equal(1))
 
-		c.Range(func(key, value interface{}) bool {
-			Expect(key).To(Equal("key"))
-			Expect(value).To(Equal("value"))
-			Expect(<-evicted).To(Equal("key"))
-			Expect(c.Len()).To(BeZero())
-			return true
-		})
+		inRange := make(chan struct{}, 1)
+		wg := sync.WaitGroup{}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer GinkgoRecover()
+			c.Range(func(key, value interface{}) bool {
+				inRange <- struct{}{}
+				// panic("tere")
+				Expect(key).To(Equal("key"))
+				Expect(value).To(Equal("value"))
+				Expect(c.Exists("key")).To(BeTrue())
+				Expect(<-evicted).To(Equal(key))
+				Expect(c.Len()).To(BeZero())
+				return true
+			})
+		}()
 
+		<-inRange
+		c.Evict("key")
+		wg.Wait()
 		c.Close()
 		Expect(c.Len()).To(BeZero())
 	})
@@ -681,10 +682,7 @@ var _ = Describe("overflow eviction order", func() {
 		warmup      = func() {
 			for i := 1; i <= n; i++ {
 				k := atomic.AddUint64(&key, 1)
-				_, closer, _ := c.Fetch(k, 0, func() (interface{}, error) {
-					return nil, nil
-				})
-				closer.Close()
+				c.Set(k, nil, 0)
 				// Make its hit count reflect the key
 				// in reverse order so we know the cache
 				// will sort the keys back.
@@ -699,10 +697,7 @@ var _ = Describe("overflow eviction order", func() {
 			for i := 0; i < n; i++ {
 				// Overflow the cache and catch the evicted keys.
 				k := atomic.AddUint64(&key, 1)
-				_, closer, _ := c.Fetch(k, 0, func() (interface{}, error) {
-					return nil, nil
-				})
-				closer.Close()
+				c.Set(k, nil, 0)
 				evictedKey := int(<-evictedKeys)
 				keys = append(keys, evictedKey)
 			}
