@@ -108,6 +108,14 @@ func (build Builder) Build() *Cache {
 	return c
 }
 
+// Exists returns whether a value for key exists in the cache.
+func (c *Cache) Exists(key interface{}) bool {
+	if r, ok := c.records.Load(key); ok && r.(*record).IsActive() {
+		return true
+	}
+	return false
+}
+
 // Get returns the value stored in the cache for a key. The boolean indicates
 // whether a value was found.
 //

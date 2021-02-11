@@ -47,6 +47,7 @@ var _ = Describe("setting values", func() {
 		BeforeEach(func() {
 			c.Set("key", 0, 0)
 			Expect(c.Len()).To(Equal(1))
+			Expect(c.Exists("key")).To(BeTrue())
 		})
 
 		Specify("value is replaced", func() {
@@ -156,6 +157,10 @@ var _ = Describe("Fetch callback", func() {
 				closer.Close()
 			}()
 			<-fetchStarted
+		})
+
+		Specify("Exists will not block and returns false", func() {
+			Expect(c.Exists("key")).To(BeFalse())
 		})
 
 		Specify("Get blocks", func() {
@@ -281,8 +286,7 @@ var _ = Describe("deleting values", func() {
 			Expect(c.Len()).To(Equal(1))
 
 			c.Evict("key")
-			_, _, exists := c.Get("key")
-			Expect(exists).To(BeFalse())
+			Expect(c.Exists("key")).To(BeFalse())
 			// Evicts are asynchronous.
 			Eventually(func() int {
 				return c.Len()
@@ -369,8 +373,7 @@ var _ = Describe("eviction callback", func() {
 		Specify("eviction callback waits for fetch to finish", func() {
 			value, closer, _ := c.Fetch("key", 0, func() (interface{}, error) {
 				c.Evict("key")
-				_, _, exists := c.Get("key")
-				Expect(exists).To(BeFalse())
+				Expect(c.Exists("key")).To(BeFalse())
 				// Key can now be evicted but shouldn't until we return.
 				select {
 				case <-evicted:
