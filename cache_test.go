@@ -506,21 +506,17 @@ var _ = Describe("ranging over values", func() {
 		c.Set("key", "value", 0)
 		Expect(c.Len()).To(Equal(1))
 
-		inRange := make(chan struct{}, 1)
 		wg := sync.WaitGroup{}
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
 			defer GinkgoRecover()
 			c.Range(func(key, value interface{}) bool {
-				inRange <- struct{}{}
-
 				Expect(key).To(Equal("key"))
 				Expect(value).To(Equal("value"))
-				Expect(c.Exists("key")).To(BeTrue())
+				Expect(c.Exists(key)).To(BeTrue())
 
-				_, closer, exists := c.Get("key")
-				fmt.Println("got")
+				_, closer, exists := c.Get(key)
 				Expect(exists).To(BeTrue())
 				closer.Close()
 				// Must call Evict in a goroutine.
@@ -535,7 +531,6 @@ var _ = Describe("ranging over values", func() {
 			})
 		}()
 
-		<-inRange
 		wg.Wait()
 		c.Close()
 		Expect(c.Len()).To(BeZero())
