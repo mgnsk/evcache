@@ -108,7 +108,7 @@ func (build Builder) Build() *Cache {
 	return c
 }
 
-// Exists returns whether a value for key exists in the cache.
+// Exists returns whether a value in the cache exists for key.
 func (c *Cache) Exists(key interface{}) bool {
 	if r, ok := c.records.Load(key); ok && r.(*record).IsActive() {
 		return true
@@ -134,7 +134,7 @@ func (c *Cache) Get(key interface{}) (value interface{}, closer io.Closer, exist
 	}
 }
 
-// Set a value in the cache for a key.
+// Set the value in the cache for a key.
 func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 	r := c.pool.Get().(*record)
 	r.mu.Lock()
@@ -193,7 +193,7 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 		if !loaded {
 			return value, r, nil
 		}
-		if v, loaded := old.LoadAndHit(); loaded {
+		if v, ok := old.LoadAndHit(); ok {
 			c.pool.Put(r)
 			return v, old, nil
 		}
@@ -229,7 +229,7 @@ func (c *Cache) Range(f func(key, value interface{}) bool) {
 // otherwise it is the insertion order with eldest first by default.
 //
 // It is not safe to use OrderedRange concurrently with any other method
-// or a deadlock may occur.
+// except Get or a deadlock may occur.
 func (c *Cache) OrderedRange(f func(key, value interface{}) bool) {
 	c.stopLoop <- struct{}{}
 	c.wg.Wait()
@@ -253,8 +253,8 @@ func (c *Cache) OrderedRange(f func(key, value interface{}) bool) {
 func (c *Cache) Evict(key interface{}) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	r, loaded := c.records.LoadAndDelete(key)
-	if !loaded {
+	r, ok := c.records.LoadAndDelete(key)
+	if !ok {
 		return
 	}
 	c.finalizeAsync(key, r.(*record))
@@ -287,15 +287,15 @@ func (c *Cache) Close() error {
 }
 
 func (c *Cache) deleteIfEqualsLocked(key interface{}, r *record) bool {
-	old, loaded := c.records.Load(key)
-	if !loaded {
+	old, ok := c.records.Load(key)
+	if !ok {
 		return false
 	}
 	if old.(*record) != r {
 		return false
 	}
-	old, loaded = c.records.LoadAndDelete(key)
-	if loaded && old.(*record) != r {
+	old, ok = c.records.LoadAndDelete(key)
+	if ok && old.(*record) != r {
 		panic("evcache: inconsistent map state")
 	}
 	return true
@@ -305,8 +305,8 @@ func (c *Cache) finalizeAsync(key interface{}, r *record) {
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
-		value, loaded := r.LoadAndReset()
-		if !loaded {
+		value, ok := r.LoadAndReset()
+		if !ok {
 			// An inactive record which had a concurrent Fetch and failed.
 			return
 		}
