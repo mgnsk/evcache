@@ -207,13 +207,10 @@ func (c *Cache) Range(f func(key, value interface{}) bool) {
 			// or deleted.
 			return true
 		}
-		r.mu.RLock()
-		if !r.IsActive() {
-			r.mu.RUnlock()
+		v, ok := r.Load()
+		if !ok {
 			return true
 		}
-		v := r.value
-		r.mu.RUnlock()
 		return f(key, v)
 	})
 }
@@ -223,7 +220,8 @@ func (c *Cache) Range(f func(key, value interface{}) bool) {
 // When LFU is used, the order is from least to most frequently used,
 // otherwise it is the insertion order with eldest first by default.
 //
-// It is not safe to use OrderedRange concurrently with any other method.
+// It is not safe to use OrderedRange concurrently with any other method
+// or a deadlock may occur.
 func (c *Cache) OrderedRange(f func(key, value interface{}) bool) {
 	c.stopLoop <- struct{}{}
 	c.wg.Wait()
@@ -233,13 +231,13 @@ func (c *Cache) OrderedRange(f func(key, value interface{}) bool) {
 	c.list.Do(func(key interface{}) bool {
 		r, ok := c.records.Load(key)
 		if !ok {
-			return true
+			panic("evcache: OrderedRange used concurrently")
 		}
-		value, ok := r.(*record).Load()
+		v, ok := r.(*record).Load()
 		if !ok {
-			return true
+			panic("evcache: OrderedRange used concurrently")
 		}
-		return f(key, value)
+		return f(key, v)
 	})
 }
 
