@@ -33,7 +33,7 @@ type EvictionCallback func(key, value interface{})
 //
 // By default, records are sorted by insertion order.
 //
-// All methods except Close are safe to use concurrently.
+// All methods except Close and OrderedRange are safe to use concurrently.
 type Cache struct {
 	records    sync.Map
 	pool       sync.Pool
