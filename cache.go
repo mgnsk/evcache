@@ -29,7 +29,7 @@ type FetchCallback func() (interface{}, error)
 // are closed.
 type EvictionCallback func(key, value interface{})
 
-// Cache is an eventually consistent ordered cache.
+// Cache is an in-memory ordered cache with optional eventually consistent LFU ordering.
 //
 // By default, records are sorted by insertion order.
 //

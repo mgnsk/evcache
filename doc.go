@@ -1,4 +1,4 @@
 /*
-Package evcache provides an eventually consistent ordered cache.
+Package evcache provides an in-memory ordered cache with optional eventually consistent LFU ordering.
 */
 package evcache
