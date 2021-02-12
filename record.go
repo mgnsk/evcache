@@ -13,10 +13,9 @@ const (
 )
 
 type record struct {
-	mu      sync.RWMutex
-	wg      sync.WaitGroup
-	readers uint32
-	ring    *ring.Ring
+	mu   sync.RWMutex
+	wg   sync.WaitGroup
+	ring *ring.Ring
 
 	value   interface{}
 	expires int64
@@ -29,7 +28,6 @@ func newRecord() *record {
 }
 
 func (r *record) Close() error {
-	atomic.AddUint32(&r.readers, ^uint32(0))
 	r.wg.Done()
 	return nil
 }
@@ -53,7 +51,6 @@ func (r *record) LoadAndHit() (interface{}, bool) {
 	if !r.IsActive() {
 		return nil, false
 	}
-	atomic.AddUint32(&r.readers, 1)
 	atomic.AddUint32(&r.hits, 1)
 	r.wg.Add(1)
 	return r.value, true

@@ -141,10 +141,10 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 	for {
 		old, loaded := c.records.LoadOrStore(key, r)
 		if !loaded {
-			r.init(value, ttl)
 			if ttl > 0 {
 				c.runLoop()
 			}
+			r.init(value, ttl)
 			if front := c.list.PushBack(key, r.ring); front != nil {
 				c.Evict(front)
 			}
@@ -154,7 +154,7 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 			c.mu.Lock()
 			defer c.mu.Unlock()
 			if c.deleteIfEqualsLocked(key, old.(*record)) {
-				c.finalizeAsync(key, old.(*record))
+				c.finalizeSync(key, old.(*record))
 			}
 		}()
 	}
@@ -180,10 +180,10 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 			c.deleteIfEqualsLocked(key, r)
 			return nil, false
 		}
-		r.init(value, ttl)
 		if ttl > 0 {
 			c.runLoop()
 		}
+		r.init(value, ttl)
 		r.wg.Add(1)
 		if front := c.list.PushBack(key, r.ring); front != nil {
 			c.Evict(front)
@@ -331,34 +331,32 @@ func (c *Cache) deleteIfEqualsLocked(key interface{}, r *record) bool {
 	return true
 }
 
-func (c *Cache) finalizeSync(key interface{}, r *record) (interface{}, bool) {
+func (c *Cache) remove(key interface{}, r *record) (interface{}, bool) {
 	value, ok := r.LoadAndReset()
 	if !ok {
+		// An inactive record which had a concurrent Fetch and failed.
 		return nil, false
 	}
 	if k := c.list.Remove(r.ring); k != nil && k != key {
 		panic("evcache: invalid ring")
 	}
-	if readers := atomic.LoadUint32(&r.readers); readers == 0 {
+	return value, true
+}
+
+func (c *Cache) finalizeSync(key interface{}, r *record) (interface{}, bool) {
+	value, ok := c.remove(key, r)
+	if !ok {
+		return nil, false
+	}
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		r.wg.Wait()
 		c.pool.Put(r)
 		if c.afterEvict != nil {
-			c.wg.Add(1)
-			go func() {
-				defer c.wg.Done()
-				c.afterEvict(key, value)
-			}()
+			c.afterEvict(key, value)
 		}
-	} else if readers > 0 {
-		c.wg.Add(1)
-		go func() {
-			defer c.wg.Done()
-			r.wg.Wait()
-			c.pool.Put(r)
-			if c.afterEvict != nil {
-				c.afterEvict(key, value)
-			}
-		}()
-	}
+	}()
 	return value, true
 }
 
@@ -366,13 +364,9 @@ func (c *Cache) finalizeAsync(key interface{}, r *record) {
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
-		value, ok := r.LoadAndReset()
+		value, ok := c.remove(key, r)
 		if !ok {
-			// An inactive record which had a concurrent Fetch and failed.
 			return
-		}
-		if k := c.list.Remove(r.ring); k != nil && k != key {
-			panic("evcache: invalid ring")
 		}
 		r.wg.Wait()
 		c.pool.Put(r)
@@ -411,7 +405,7 @@ func (c *Cache) processRecords(now int64) {
 			c.mu.Lock()
 			defer c.mu.Unlock()
 			if c.deleteIfEqualsLocked(key, r) {
-				c.finalizeAsync(key, r)
+				c.finalizeSync(key, r)
 			}
 			return true
 		}
