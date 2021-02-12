@@ -679,10 +679,27 @@ var _ = Describe("overflow eviction order", func() {
 		key         uint64
 		evictedKeys chan uint64
 		c           *evcache.Cache
-		warmup      = func() {
+		warmupSet   = func() {
 			for i := 1; i <= n; i++ {
 				k := atomic.AddUint64(&key, 1)
 				c.Set(k, nil, 0)
+				// Make its hit count reflect the key
+				// in reverse order so we know the cache
+				// will sort the keys back.
+				for j := 1; j <= n-i; j++ {
+					_, closer, exists := c.Get(k)
+					Expect(exists).To(BeTrue())
+					closer.Close()
+				}
+			}
+		}
+		warmupFetch = func() {
+			for i := 1; i <= n; i++ {
+				k := atomic.AddUint64(&key, 1)
+				_, closer, _ := c.Fetch(k, 0, func() (interface{}, error) {
+					return nil, nil
+				})
+				closer.Close()
 				// Make its hit count reflect the key
 				// in reverse order so we know the cache
 				// will sort the keys back.
@@ -721,16 +738,14 @@ var _ = Describe("overflow eviction order", func() {
 				Build()
 		})
 
-		When("records have different popularity", func() {
-			Specify("the eviction order is sorted by eldest keys first", func() {
-				warmup()
-				keys := overflow()
+		Specify("the eviction order is sorted by eldest keys first", func() {
+			warmupSet()
+			keys := overflow()
 
-				Expect(sort.IntsAreSorted(keys)).To(BeTrue())
+			Expect(sort.IntsAreSorted(keys)).To(BeTrue())
 
-				c.Close()
-				Expect(c.Len()).To(BeZero())
-			})
+			c.Close()
+			Expect(c.Len()).To(BeZero())
 		})
 	})
 
@@ -746,9 +761,23 @@ var _ = Describe("overflow eviction order", func() {
 				Build()
 		})
 
-		When("records have different popularity", func() {
-			Specify("the eviction order is almost sorted LFU keys first", func() {
-				warmup()
+		When("Set is used", func() {
+			Specify("the eviction order is sorted LFU keys first", func() {
+				warmupSet()
+
+				time.Sleep(2 * evcache.SyncInterval)
+
+				keys := overflow()
+				Expect(sort.IsSorted(sort.Reverse(sort.IntSlice(keys))))
+
+				c.Close()
+				Expect(c.Len()).To(BeZero())
+			})
+		})
+
+		When("Fetch is used", func() {
+			Specify("the eviction order is sorted LFU keys first", func() {
+				warmupFetch()
 
 				time.Sleep(2 * evcache.SyncInterval)
 

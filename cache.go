@@ -178,7 +178,8 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 			c.deleteIfEqualsLocked(key, r)
 			return nil, false
 		}
-		r.initAndHit(value, ttl)
+		r.init(value, ttl)
+		r.wg.Add(1)
 		if front := c.list.PushBack(key, r.ring); front != nil {
 			c.Evict(front)
 		}
