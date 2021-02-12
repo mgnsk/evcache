@@ -33,7 +33,7 @@ type EvictionCallback func(key, value interface{})
 //
 // By default, records are sorted by insertion order.
 //
-// All methods except Close and OrderedRange are safe to use concurrently.
+// All methods except Close are safe to use concurrently.
 type Cache struct {
 	records    sync.Map
 	pool       sync.Pool
@@ -94,7 +94,7 @@ func (build Builder) Build() *Cache {
 				return newRecord()
 			},
 		},
-		stopLoop: make(chan struct{}, 1),
+		stopLoop: make(chan struct{}),
 	}
 	build(c)
 	if c.list == nil {
@@ -223,30 +223,6 @@ func (c *Cache) Range(f func(key, value interface{}) bool) {
 		v, ok := r.Load()
 		if !ok {
 			return true
-		}
-		return f(key, v)
-	})
-}
-
-// OrderedRange calls f sequentially for each key and value present in the cache
-// in order. If f returns false, Range stops the iteration.
-// When LFU is used, the order is from least to most frequently used,
-// otherwise it is the insertion order with eldest first by default.
-//
-// It is not safe to use OrderedRange concurrently with any other method
-// except Exists and Get or a deadlock may occur.
-func (c *Cache) OrderedRange(f func(key, value interface{}) bool) {
-	c.runLoop()
-	c.stopLoop <- struct{}{}
-	c.wg.Wait()
-	c.list.Do(func(key interface{}) bool {
-		r, ok := c.records.Load(key)
-		if !ok {
-			panic("evcache: OrderedRange used concurrently")
-		}
-		v, ok := r.(*record).Load()
-		if !ok {
-			panic("evcache: OrderedRange used concurrently")
 		}
 		return f(key, v)
 	})
