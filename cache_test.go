@@ -250,10 +250,12 @@ var _ = Describe("Fetch callback", func() {
 				if key == "key" {
 					Fail("expected to skip key")
 				}
+				c.Evict("key1")
 				n++
 				return true
 			})
 			Expect(n).To(Equal(1))
+
 			valueCh <- "value"
 
 			wg.Wait()
@@ -362,8 +364,8 @@ var _ = Describe("eviction callback", func() {
 	When("record is evicted concurrently with fetch callback", func() {
 		Specify("eviction callback waits for fetch to finish", func() {
 			value, closer, _ := c.Fetch("key", 0, func() (interface{}, error) {
-				c.Evict("key")
 				Expect(c.Exists("key")).To(BeFalse())
+				c.Evict("key")
 				// Key can now be evicted but shouldn't until we return.
 				select {
 				case <-evicted:
@@ -539,7 +541,9 @@ var _ = Describe("ordered range", func() {
 	)
 
 	BeforeEach(func() {
-		c = evcache.New().Build()
+		c = evcache.New().
+			WithCapacity(uint32(n)).
+			Build()
 		for i := 0; i < n; i++ {
 			c.Set(i, i, 0)
 		}
@@ -682,7 +686,7 @@ var _ = Describe("overflow eviction order", func() {
 		warmupSet   = func() {
 			for i := 1; i <= n; i++ {
 				k := atomic.AddUint64(&key, 1)
-				c.Set(k, nil, 0)
+				c.Set(k, "value", 0)
 				// Make its hit count reflect the key
 				// in reverse order so we know the cache
 				// will sort the keys back.
@@ -697,7 +701,7 @@ var _ = Describe("overflow eviction order", func() {
 			for i := 1; i <= n; i++ {
 				k := atomic.AddUint64(&key, 1)
 				_, closer, _ := c.Fetch(k, 0, func() (interface{}, error) {
-					return nil, nil
+					return "value", nil
 				})
 				closer.Close()
 				// Make its hit count reflect the key
@@ -717,6 +721,16 @@ var _ = Describe("overflow eviction order", func() {
 				c.Set(k, nil, 0)
 				evictedKey := int(<-evictedKeys)
 				keys = append(keys, evictedKey)
+			}
+			return keys
+		}
+		pop = func() (keys []int) {
+			for i := 0; i < n; i++ {
+				key, value := c.Pop()
+				evictedKey := <-evictedKeys
+				Expect(evictedKey).To(Equal(key))
+				Expect(value).To(Equal("value"))
+				keys = append(keys, int(evictedKey))
 			}
 			return keys
 		}
@@ -740,8 +754,18 @@ var _ = Describe("overflow eviction order", func() {
 
 		Specify("the eviction order is sorted by eldest keys first", func() {
 			warmupSet()
-			keys := overflow()
 
+			keys := overflow()
+			Expect(sort.IntsAreSorted(keys)).To(BeTrue())
+
+			c.Close()
+			Expect(c.Len()).To(BeZero())
+		})
+
+		Specify("pop order is sorted by eldest keys first", func() {
+			warmupSet()
+
+			keys := pop()
 			Expect(sort.IntsAreSorted(keys)).To(BeTrue())
 
 			c.Close()
@@ -768,7 +792,7 @@ var _ = Describe("overflow eviction order", func() {
 				time.Sleep(2 * evcache.SyncInterval)
 
 				keys := overflow()
-				Expect(sort.IsSorted(sort.Reverse(sort.IntSlice(keys))))
+				Expect(sort.IsSorted(sort.Reverse(sort.IntSlice(keys)))).To(BeTrue())
 
 				c.Close()
 				Expect(c.Len()).To(BeZero())
@@ -782,11 +806,23 @@ var _ = Describe("overflow eviction order", func() {
 				time.Sleep(2 * evcache.SyncInterval)
 
 				keys := overflow()
-				Expect(sort.IsSorted(sort.Reverse(sort.IntSlice(keys))))
+				Expect(sort.IsSorted(sort.Reverse(sort.IntSlice(keys)))).To(BeTrue())
 
 				c.Close()
 				Expect(c.Len()).To(BeZero())
 			})
+		})
+
+		Specify("pop order is sorted by LFU keys first", func() {
+			warmupSet()
+
+			time.Sleep(2 * evcache.SyncInterval)
+
+			keys := pop()
+			Expect(sort.IsSorted(sort.Reverse(sort.IntSlice(keys)))).To(BeTrue())
+
+			c.Close()
+			Expect(c.Len()).To(BeZero())
 		})
 	})
 })
