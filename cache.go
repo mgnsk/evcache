@@ -8,7 +8,7 @@ import (
 )
 
 // SyncInterval is the interval for background loop
-// for autoexpiry and optional eventual LFU eviction ordering.
+// for autoexpiry and optional eventual LFU ordering.
 //
 // If cache overflows while LFU is enabled and records are created faster than
 // SyncInterval can update record ordering, the eviction starts losing LFU order
@@ -76,7 +76,7 @@ func (build Builder) WithCapacity(capacity uint32) Builder {
 	}
 }
 
-// WithLFU enables the LFU eviction ordering of records.
+// WithLFU enables the eventual LFU ordering of records.
 //
 // New records are inserted as the most frequently used to
 // reduce premature eviction of new but unused records.

@@ -762,7 +762,7 @@ var _ = Describe("overflow eviction order", func() {
 		})
 
 		When("Set is used", func() {
-			Specify("the eviction order is sorted LFU keys first", func() {
+			Specify("the eviction order is sorted by LFU keys first", func() {
 				warmupSet()
 
 				time.Sleep(2 * evcache.SyncInterval)
@@ -776,7 +776,7 @@ var _ = Describe("overflow eviction order", func() {
 		})
 
 		When("Fetch is used", func() {
-			Specify("the eviction order is sorted LFU keys first", func() {
+			Specify("the eviction order is sorted by LFU keys first", func() {
 				warmupFetch()
 
 				time.Sleep(2 * evcache.SyncInterval)
