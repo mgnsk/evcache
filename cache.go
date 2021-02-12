@@ -40,6 +40,7 @@ type Cache struct {
 	wg         sync.WaitGroup
 	mu         sync.RWMutex
 	onceLoop   sync.Once
+	loopMu     sync.Mutex
 	lfuEnabled bool
 	list       *ringList
 	afterEvict EvictionCallback
@@ -52,7 +53,7 @@ type Builder func(*Cache)
 // New creates an empty cache.
 //
 // Cache must be closed after usage has stopped
-// to prevent a leaking goroutine.
+// to prevent a leaking resources.
 //
 // It is not safe to close the cache while in use.
 func New() Builder {
@@ -228,15 +229,41 @@ func (c *Cache) Range(f func(key, value interface{}) bool) {
 	})
 }
 
-// Evict a key. After Evict returns, no Get or Fetch will load the key.
-func (c *Cache) Evict(key interface{}) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	r, ok := c.records.LoadAndDelete(key)
-	if !ok {
-		return
+// Do calls f sequentially for each key and value present in the cache
+// in order. If f returns false, Do stops the iteration.
+// When LFU is used, the order is from least to most frequently used,
+// otherwise it is the insertion order with eldest first by default.
+//
+// It is not safe to use Do concurrently with any other method
+// except Exists and Get or a deadlock may occur. f is not allowed
+// to modify the cache.
+func (c *Cache) Do(f func(key, value interface{}) bool) {
+	c.loopMu.Lock()
+	defer c.loopMu.Unlock()
+	c.list.Do(func(key interface{}) bool {
+		r, ok := c.records.Load(key)
+		if !ok {
+			panic("evcache: Do used concurrently")
+		}
+		v, ok := r.(*record).Load()
+		if !ok {
+			panic("evcache: Do used concurrently")
+		}
+		return f(key, v)
+	})
+}
+
+// Pop evicts and returns the oldest key and value. If LFU ordering is
+// enabled, then the least frequently used key and value.
+func (c *Cache) Pop() (key, value interface{}) {
+	for {
+		if key = c.list.Pop(); key == nil {
+			return nil, nil
+		}
+		if value, ok := c.LoadAndEvict(key); ok {
+			return key, value
+		}
 	}
-	c.finalizeAsync(key, r.(*record))
 }
 
 // LoadAndEvict evicts a key and returns its value.
@@ -251,17 +278,15 @@ func (c *Cache) LoadAndEvict(key interface{}) (interface{}, bool) {
 	return c.finalizeSync(key, r.(*record))
 }
 
-// Pop evicts and returns the oldest key and value. If LFU ordering is
-// enabled, then the least frequently used key and value.
-func (c *Cache) Pop() (key, value interface{}) {
-	for {
-		if key = c.list.Pop(); key == nil {
-			return nil, nil
-		}
-		if value, ok := c.LoadAndEvict(key); ok {
-			return key, value
-		}
+// Evict a key and its value from the cache.
+func (c *Cache) Evict(key interface{}) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	r, ok := c.records.LoadAndDelete(key)
+	if !ok {
+		return
 	}
+	c.finalizeAsync(key, r.(*record))
 }
 
 // Flush evicts all keys from the cache.
@@ -367,7 +392,9 @@ func (c *Cache) runLoop() {
 				case <-c.stopLoop:
 					return
 				case now := <-ticker.C:
+					c.loopMu.Lock()
 					c.processRecords(now.UnixNano())
+					c.loopMu.Unlock()
 				}
 			}
 		}()
