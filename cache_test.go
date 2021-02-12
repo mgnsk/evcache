@@ -726,7 +726,6 @@ var _ = Describe("overflow eviction order", func() {
 		}
 		pop = func() (keys []int) {
 			for i := 0; i < n; i++ {
-				// Overflow the cache and catch the evicted keys.
 				key, value := c.Pop()
 				evictedKey := <-evictedKeys
 				Expect(evictedKey).To(Equal(key))
