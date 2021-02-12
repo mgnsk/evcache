@@ -229,7 +229,7 @@ func (c *Cache) Range(f func(key, value interface{}) bool) {
 // otherwise it is the insertion order with eldest first by default.
 //
 // It is not safe to use OrderedRange concurrently with any other method
-// except Get or a deadlock may occur.
+// except Exists and Get or a deadlock may occur.
 func (c *Cache) OrderedRange(f func(key, value interface{}) bool) {
 	c.stopLoop <- struct{}{}
 	c.wg.Wait()
