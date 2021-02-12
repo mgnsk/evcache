@@ -39,6 +39,7 @@ type Cache struct {
 	pool       sync.Pool
 	wg         sync.WaitGroup
 	mu         sync.RWMutex
+	onceLoop   sync.Once
 	lfuEnabled bool
 	list       *ringList
 	afterEvict EvictionCallback
@@ -93,13 +94,15 @@ func (build Builder) Build() *Cache {
 				return newRecord()
 			},
 		},
-		stopLoop: make(chan struct{}),
+		stopLoop: make(chan struct{}, 1),
 	}
 	build(c)
 	if c.list == nil {
 		c.list = newRingList(0)
 	}
-	go c.runLoop()
+	if c.lfuEnabled {
+		c.runLoop()
+	}
 	return c
 }
 
@@ -138,6 +141,9 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 		old, loaded := c.records.LoadOrStore(key, r)
 		if !loaded {
 			r.init(value, ttl)
+			if ttl > 0 {
+				c.runLoop()
+			}
 			if front := c.list.PushBack(key, r.ring); front != nil {
 				c.Evict(front)
 			}
@@ -174,6 +180,9 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 			return nil, false
 		}
 		r.init(value, ttl)
+		if ttl > 0 {
+			c.runLoop()
+		}
 		r.wg.Add(1)
 		if front := c.list.PushBack(key, r.ring); front != nil {
 			c.Evict(front)
@@ -227,11 +236,9 @@ func (c *Cache) Range(f func(key, value interface{}) bool) {
 // It is not safe to use OrderedRange concurrently with any other method
 // except Exists and Get or a deadlock may occur.
 func (c *Cache) OrderedRange(f func(key, value interface{}) bool) {
+	c.runLoop()
 	c.stopLoop <- struct{}{}
 	c.wg.Wait()
-	defer func() {
-		go c.runLoop()
-	}()
 	c.list.Do(func(key interface{}) bool {
 		r, ok := c.records.Load(key)
 		if !ok {
@@ -300,6 +307,7 @@ func (c *Cache) Len() int {
 // It is not safe to close the cache
 // while in use.
 func (c *Cache) Close() error {
+	c.runLoop()
 	c.stopLoop <- struct{}{}
 	close(c.stopLoop)
 	c.Flush()
@@ -374,16 +382,20 @@ func (c *Cache) finalizeAsync(key interface{}, r *record) {
 }
 
 func (c *Cache) runLoop() {
-	ticker := time.NewTicker(SyncInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-c.stopLoop:
-			return
-		case now := <-ticker.C:
-			c.processRecords(now.UnixNano())
-		}
-	}
+	c.onceLoop.Do(func() {
+		go func() {
+			ticker := time.NewTicker(SyncInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-c.stopLoop:
+					return
+				case now := <-ticker.C:
+					c.processRecords(now.UnixNano())
+				}
+			}
+		}()
+	})
 }
 
 func (c *Cache) processRecords(now int64) {
