@@ -507,7 +507,7 @@ var _ = Describe("ranging over values", func() {
 		Expect(c.Len()).To(Equal(1))
 
 		wg := sync.WaitGroup{}
-		wg.Add(2)
+		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			defer GinkgoRecover()
@@ -519,12 +519,8 @@ var _ = Describe("ranging over values", func() {
 				_, closer, exists := c.Get(key)
 				Expect(exists).To(BeTrue())
 				closer.Close()
-				// Must call Evict in a goroutine.
-				go func() {
-					// Must exclude concurrent Evict/Close.
-					defer wg.Done()
-					c.Evict("key")
-				}()
+
+				c.Evict("key")
 				Expect(<-evicted).To(Equal(key))
 				Expect(c.Len()).To(BeZero())
 				return true
