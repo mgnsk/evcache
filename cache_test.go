@@ -2,7 +2,6 @@ package evcache_test
 
 import (
 	"errors"
-	"fmt"
 	"math/rand"
 	"sort"
 	"sync"
@@ -754,10 +753,7 @@ var _ = Describe("overflow eviction order", func() {
 				time.Sleep(2 * evcache.SyncInterval)
 
 				keys := overflow()
-				fmt.Printf("near-decreasing order of LFU keys: %v\n", keys)
-
-				sortedness := calcSortedness(sort.Reverse(sort.IntSlice(keys)))
-				fmt.Printf("reverse-sortedness: %f\n", sortedness)
+				Expect(sort.IsSorted(sort.Reverse(sort.IntSlice(keys))))
 
 				c.Close()
 				Expect(c.Len()).To(BeZero())
@@ -765,14 +761,3 @@ var _ = Describe("overflow eviction order", func() {
 		})
 	})
 })
-
-func calcSortedness(data sort.Interface) float64 {
-	invalid := 0
-	n := data.Len()
-	for i := n - 1; i > 0; i-- {
-		if data.Less(i, i-1) {
-			invalid++
-		}
-	}
-	return 1.0 - float64(invalid)/float64(n)
-}

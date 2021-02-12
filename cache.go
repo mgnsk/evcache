@@ -76,7 +76,7 @@ func (build Builder) WithCapacity(capacity uint32) Builder {
 	}
 }
 
-// WithLFU enables the near-LFU eviction order of records.
+// WithLFU enables the LFU eviction ordering of records.
 //
 // New records are inserted as the most frequently used to
 // reduce premature eviction of new but unused records.
