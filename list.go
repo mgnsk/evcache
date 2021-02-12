@@ -28,6 +28,16 @@ func (l *ringList) Len() int {
 	return int(l.size)
 }
 
+// Pop removes and returns the front element.
+func (l *ringList) Pop() (value interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.back == nil {
+		return nil
+	}
+	return l.unlink(l.back.Next())
+}
+
 // PushBack inserts a value at the back of list. If capacity is exceeded,
 // an element from the front of list is removed and its value returned.
 func (l *ringList) PushBack(value interface{}, r *ring.Ring) (front interface{}) {

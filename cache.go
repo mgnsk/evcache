@@ -245,7 +245,7 @@ func (c *Cache) OrderedRange(f func(key, value interface{}) bool) {
 	})
 }
 
-// Evict a key.
+// Evict a key. After Evict returns, no Get or Fetch will load the key.
 func (c *Cache) Evict(key interface{}) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -254,6 +254,31 @@ func (c *Cache) Evict(key interface{}) {
 		return
 	}
 	c.finalizeAsync(key, r.(*record))
+}
+
+// LoadAndEvict evicts a key and returns its value.
+func (c *Cache) LoadAndEvict(key interface{}) (interface{}, bool) {
+	c.mu.RLock()
+	r, ok := c.records.LoadAndDelete(key)
+	if !ok {
+		c.mu.RUnlock()
+		return nil, false
+	}
+	c.mu.RUnlock()
+	return c.finalizeSync(key, r.(*record))
+}
+
+// Pop evicts and returns the oldest key and value. If LFU ordering is
+// enabled, then the least frequently used key and value.
+func (c *Cache) Pop() (key, value interface{}) {
+	for {
+		if key = c.list.Pop(); key == nil {
+			return nil, nil
+		}
+		if value, ok := c.LoadAndEvict(key); ok {
+			return key, value
+		}
+	}
 }
 
 // Flush evicts all keys from the cache.
@@ -295,6 +320,26 @@ func (c *Cache) deleteIfEqualsLocked(key interface{}, r *record) bool {
 		panic("evcache: inconsistent map state")
 	}
 	return true
+}
+
+func (c *Cache) finalizeSync(key interface{}, r *record) (interface{}, bool) {
+	value, ok := r.LoadAndReset()
+	if !ok {
+		return nil, false
+	}
+	if k := c.list.Remove(r.ring); k != nil && k != key {
+		panic("evcache: invalid ring")
+	}
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		r.wg.Wait()
+		c.pool.Put(r)
+		if c.afterEvict != nil {
+			c.afterEvict(key, value)
+		}
+	}()
+	return value, true
 }
 
 func (c *Cache) finalizeAsync(key interface{}, r *record) {
