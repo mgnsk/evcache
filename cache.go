@@ -330,15 +330,26 @@ func (c *Cache) finalizeSync(key interface{}, r *record) (interface{}, bool) {
 	if k := c.list.Remove(r.ring); k != nil && k != key {
 		panic("evcache: invalid ring")
 	}
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
-		r.wg.Wait()
+	if readers := atomic.LoadUint32(&r.readers); readers == 0 {
 		c.pool.Put(r)
 		if c.afterEvict != nil {
-			c.afterEvict(key, value)
+			c.wg.Add(1)
+			go func() {
+				defer c.wg.Done()
+				c.afterEvict(key, value)
+			}()
 		}
-	}()
+	} else if readers > 0 {
+		c.wg.Add(1)
+		go func() {
+			defer c.wg.Done()
+			r.wg.Wait()
+			c.pool.Put(r)
+			if c.afterEvict != nil {
+				c.afterEvict(key, value)
+			}
+		}()
+	}
 	return value, true
 }
 

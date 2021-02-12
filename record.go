@@ -19,6 +19,7 @@ type record struct {
 
 	value   interface{}
 	expires int64
+	readers uint32
 	hits    uint32
 	state   uint32
 }
@@ -28,6 +29,7 @@ func newRecord() *record {
 }
 
 func (r *record) Close() error {
+	atomic.AddUint32(&r.readers, ^uint32(0))
 	r.wg.Done()
 	return nil
 }
@@ -51,8 +53,9 @@ func (r *record) LoadAndHit() (interface{}, bool) {
 	if !r.IsActive() {
 		return nil, false
 	}
-	r.wg.Add(1)
+	atomic.AddUint32(&r.readers, 1)
 	atomic.AddUint32(&r.hits, 1)
+	r.wg.Add(1)
 	return r.value, true
 }
 

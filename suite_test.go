@@ -60,3 +60,15 @@ func BenchmarkFetchAndEvict(b *testing.B) {
 		}
 	})
 }
+
+func BenchmarkPop(b *testing.B) {
+	c := evcache.New().Build()
+	for i := 0; i < b.N; i++ {
+		c.Set(i, nil, 0)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		c.Pop()
+	}
+}
