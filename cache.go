@@ -146,7 +146,7 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 			}
 			r.init(value, ttl)
 			if front := c.list.PushBack(key, r.ring); front != nil {
-				c.Evict(front)
+				c.LoadAndEvict(front)
 			}
 			return
 		}
@@ -186,7 +186,7 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 		r.init(value, ttl)
 		r.wg.Add(1)
 		if front := c.list.PushBack(key, r.ring); front != nil {
-			c.Evict(front)
+			c.LoadAndEvict(front)
 		}
 		return nil, false
 	}
@@ -292,7 +292,7 @@ func (c *Cache) Evict(key interface{}) {
 // Flush evicts all keys from the cache.
 func (c *Cache) Flush() {
 	c.records.Range(func(key, _ interface{}) bool {
-		c.Evict(key)
+		c.LoadAndEvict(key)
 		return true
 	})
 }
@@ -348,15 +348,19 @@ func (c *Cache) finalizeSync(key interface{}, r *record) (interface{}, bool) {
 	if !ok {
 		return nil, false
 	}
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
-		r.wg.Wait()
+	if c.afterEvict != nil {
+		c.wg.Add(1)
+		go func() {
+			defer c.wg.Done()
+			r.wg.Wait()
+			c.pool.Put(r)
+			if c.afterEvict != nil {
+				c.afterEvict(key, value)
+			}
+		}()
+	} else {
 		c.pool.Put(r)
-		if c.afterEvict != nil {
-			c.afterEvict(key, value)
-		}
-	}()
+	}
 	return value, true
 }
 
