@@ -68,7 +68,8 @@ func (build Builder) WithEvictionCallback(cb EvictionCallback) Builder {
 
 // WithCapacity configures the cache with specified capacity.
 //
-// If cache exceeds the limit, the eldest record is evicted.
+// If cache exceeds the limit, the eldest record is evicted or
+// if LFU is enabled, the least frequently used record is evicted.
 func (build Builder) WithCapacity(capacity uint32) Builder {
 	return func(c *Cache) {
 		build(c)
@@ -76,16 +77,10 @@ func (build Builder) WithCapacity(capacity uint32) Builder {
 	}
 }
 
-// WithLFU enables the eventual LFU ordering of records.
-//
-// New records are inserted as the most frequently used to
-// reduce premature eviction of new but unused records.
+// WithLFU enables eventual LFU ordering of records.
 func (build Builder) WithLFU() Builder {
 	return func(c *Cache) {
 		build(c)
-		if c.list == nil {
-			panic("evcache: WithLFU requires WithCapacity")
-		}
 		c.lfuEnabled = true
 	}
 }
