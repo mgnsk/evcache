@@ -13,13 +13,13 @@ const (
 )
 
 type record struct {
-	mu   sync.RWMutex
-	wg   sync.WaitGroup
-	ring *ring.Ring
+	mu      sync.RWMutex
+	wg      sync.WaitGroup
+	readers uint32
+	ring    *ring.Ring
 
 	value   interface{}
 	expires int64
-	readers uint32
 	hits    uint32
 	state   uint32
 }
@@ -67,8 +67,8 @@ func (r *record) LoadAndReset() (interface{}, bool) {
 	}
 	value := r.value
 	r.value = nil
-	r.expires = 0
-	r.hits = 0
+	atomic.StoreInt64(&r.expires, 0)
+	atomic.StoreUint32(&r.hits, 0)
 	return value, true
 }
 
@@ -78,10 +78,11 @@ func (r *record) init(value interface{}, ttl time.Duration) {
 	}
 	r.value = value
 	if ttl > 0 {
-		r.expires = time.Now().Add(ttl).UnixNano()
+		atomic.StoreInt64(&r.expires, time.Now().Add(ttl).UnixNano())
 	}
 }
 
 func (r *record) expired(now int64) bool {
-	return r.expires > 0 && r.expires < now
+	expires := atomic.LoadInt64(&r.expires)
+	return expires > 0 && expires < now
 }

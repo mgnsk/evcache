@@ -392,11 +392,6 @@ func (c *Cache) processRecords(now int64) {
 		if !r.IsActive() {
 			return true
 		}
-		r.mu.RLock()
-		defer r.mu.RUnlock()
-		if !r.IsActive() {
-			return true
-		}
 		if r.expired(now) {
 			c.mu.Lock()
 			defer c.mu.Unlock()
@@ -405,11 +400,10 @@ func (c *Cache) processRecords(now int64) {
 			}
 			return true
 		}
-		if !c.lfuEnabled {
-			return true
-		}
-		if hits := atomic.SwapUint32(&r.hits, 0); hits > 0 {
-			c.list.MoveForward(r.ring, hits)
+		if c.lfuEnabled {
+			if hits := atomic.SwapUint32(&r.hits, 0); hits > 0 {
+				c.list.MoveForward(r.ring, hits)
+			}
 		}
 		return true
 	})
