@@ -51,9 +51,7 @@ var _ = Describe("setting values", func() {
 
 		Specify("value is replaced", func() {
 			c.Set("key", 1, 0)
-			Eventually(func() int {
-				return c.Len()
-			}).Should(Equal(1))
+			Expect(c.Len()).To(Equal(1))
 
 			c.Close()
 			Expect(c.Len()).To(BeZero())
@@ -269,17 +267,12 @@ var _ = Describe("deleting values", func() {
 
 	When("value exists", func() {
 		Specify("it is evicted", func() {
-			// Stores are synchronous.
 			c.Set("key", "value", 0)
 			Expect(c.Len()).To(Equal(1))
 
 			c.Evict("key")
 			Expect(c.Exists("key")).To(BeFalse())
-			// Evicts are synchronous for the map
-			// but asynchronous for the list.
-			Eventually(func() int {
-				return c.Len()
-			}).Should(BeZero())
+			Expect(c.Len()).To(BeZero())
 
 			c.Close()
 			Expect(c.Len()).To(BeZero())
@@ -300,9 +293,7 @@ var _ = Describe("flushing the cache", func() {
 			Expect(c.Len()).To(Equal(1))
 
 			c.Flush()
-			Eventually(func() int {
-				return c.Len()
-			}).Should(BeZero())
+			Expect(c.Len()).To(BeZero())
 
 			c.Close()
 			Expect(c.Len()).To(BeZero())
