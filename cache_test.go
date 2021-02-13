@@ -133,17 +133,13 @@ var _ = Describe("Fetch callback", func() {
 		var (
 			done    uint64
 			valueCh chan string
-			wg      sync.WaitGroup
 		)
 		BeforeEach(func() {
 			done = 0
 			valueCh = make(chan string)
-			wg = sync.WaitGroup{}
 
 			fetchStarted := make(chan struct{})
-			wg.Add(1)
 			go func() {
-				defer wg.Done()
 				defer GinkgoRecover()
 				_, closer, _ := c.Fetch("key", 0, func() (interface{}, error) {
 					close(fetchStarted)
@@ -162,77 +158,57 @@ var _ = Describe("Fetch callback", func() {
 			Expect(c.Exists("key")).To(BeFalse())
 			close(valueCh)
 
-			wg.Wait()
-
 			c.Close()
 			Expect(c.Len()).To(BeZero())
 		})
 
 		Specify("Get blocks", func() {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				defer GinkgoRecover()
-				v, closer, exists := c.Get("key")
-				if atomic.CompareAndSwapUint64(&done, 0, 1) {
-					Fail("expected first Fetch to have returned first")
-				}
-				Expect(exists).To(BeTrue())
-				closer.Close()
-				Expect(v).To(Equal("value"))
-			}()
 			time.AfterFunc(4*evcache.SyncInterval, func() {
 				valueCh <- "value"
 			})
 
-			wg.Wait()
+			v, closer, exists := c.Get("key")
+			if atomic.CompareAndSwapUint64(&done, 0, 1) {
+				Fail("expected first Fetch to have returned first")
+			}
+			Expect(exists).To(BeTrue())
+			closer.Close()
+			Expect(v).To(Equal("value"))
 
 			c.Close()
 			Expect(c.Len()).To(BeZero())
 		})
 
 		Specify("Fetch blocks", func() {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				defer GinkgoRecover()
-				v, closer, err := c.Fetch("key", 0, func() (interface{}, error) {
-					panic("unexpected fetch callback")
-				})
-				if atomic.CompareAndSwapUint64(&done, 0, 1) {
-					Fail("expected first Fetch to have returned first")
-				}
-				Expect(err).To(BeNil())
-				closer.Close()
-				Expect(v).To(Equal("value"))
-			}()
 			time.AfterFunc(4*evcache.SyncInterval, func() {
 				valueCh <- "value"
 			})
 
-			wg.Wait()
+			v, closer, err := c.Fetch("key", 0, func() (interface{}, error) {
+				panic("unexpected fetch callback")
+			})
+			if atomic.CompareAndSwapUint64(&done, 0, 1) {
+				Fail("expected first Fetch to have returned first")
+			}
+			Expect(err).To(BeNil())
+			closer.Close()
+			Expect(v).To(Equal("value"))
 
 			c.Close()
 			Expect(c.Len()).To(BeZero())
 		})
 
 		Specify("Evict blocks", func() {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				defer GinkgoRecover()
-				v, ok := c.Evict("key")
-				if atomic.CompareAndSwapUint64(&done, 0, 1) {
-					Fail("expected first Fetch to have returned first")
-				}
-				Expect(ok).To(BeTrue())
-				Expect(v).To(Equal("value"))
-			}()
 			time.AfterFunc(4*evcache.SyncInterval, func() {
 				valueCh <- "value"
 			})
 
-			wg.Wait()
+			v, ok := c.Evict("key")
+			if atomic.CompareAndSwapUint64(&done, 0, 1) {
+				Fail("expected first Fetch to have returned first")
+			}
+			Expect(ok).To(BeTrue())
+			Expect(v).To(Equal("value"))
 
 			c.Close()
 			Expect(c.Len()).To(BeZero())
@@ -257,8 +233,6 @@ var _ = Describe("Fetch callback", func() {
 			Expect(v).To(Equal("value"))
 			Expect(c.Len()).To(Equal(1))
 
-			wg.Wait()
-
 			c.Close()
 			Expect(c.Len()).To(BeZero())
 		})
@@ -279,8 +253,6 @@ var _ = Describe("Fetch callback", func() {
 			Expect(n).To(Equal(1))
 
 			valueCh <- "value"
-
-			wg.Wait()
 
 			c.Close()
 			Expect(c.Len()).To(BeZero())
