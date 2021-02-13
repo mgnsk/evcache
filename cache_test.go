@@ -140,11 +140,11 @@ var _ = Describe("Fetch callback", func() {
 	When("callback blocks and same key is accessed", func() {
 		var (
 			done    uint64
-			valueCh chan string
+			valueCh chan interface{}
 		)
 		BeforeEach(func() {
 			done = 0
-			valueCh = make(chan string)
+			valueCh = make(chan interface{})
 
 			fetchStarted := make(chan struct{})
 			wg.Add(1)
@@ -157,9 +157,14 @@ var _ = Describe("Fetch callback", func() {
 					if !atomic.CompareAndSwapUint64(&done, 0, 1) {
 						Fail("expected to return first")
 					}
+					if err, ok := v.(error); ok {
+						return nil, err
+					}
 					return v, nil
 				})
-				closer.Close()
+				if closer != nil {
+					closer.Close()
+				}
 			}()
 			<-fetchStarted
 		})
@@ -169,47 +174,79 @@ var _ = Describe("Fetch callback", func() {
 			close(valueCh)
 		})
 
-		Specify("Get blocks", func() {
-			time.AfterFunc(4*evcache.SyncInterval, func() {
-				valueCh <- "value"
+		Context("Fetch callback does not return an error", func() {
+			BeforeEach(func() {
+				time.AfterFunc(4*evcache.SyncInterval, func() {
+					valueCh <- "value"
+				})
 			})
 
-			v, closer, exists := c.Get("key")
-			if atomic.CompareAndSwapUint64(&done, 0, 1) {
-				Fail("expected first Fetch to have returned first")
-			}
-			Expect(exists).To(BeTrue())
-			closer.Close()
-			Expect(v).To(Equal("value"))
+			Specify("Get blocks", func() {
+				v, closer, exists := c.Get("key")
+				if atomic.CompareAndSwapUint64(&done, 0, 1) {
+					Fail("expected first Fetch to have returned first")
+				}
+				Expect(exists).To(BeTrue())
+				closer.Close()
+				Expect(v).To(Equal("value"))
+			})
+
+			Specify("Fetch blocks", func() {
+				v, closer, err := c.Fetch("key", 0, func() (interface{}, error) {
+					panic("unexpected fetch callback")
+				})
+				if atomic.CompareAndSwapUint64(&done, 0, 1) {
+					Fail("expected first Fetch to have returned first")
+				}
+				Expect(err).To(BeNil())
+				closer.Close()
+				Expect(v).To(Equal("value"))
+			})
+
+			Specify("Evict blocks", func() {
+				v, ok := c.Evict("key")
+				if atomic.CompareAndSwapUint64(&done, 0, 1) {
+					Fail("expected first Fetch to have returned first")
+				}
+				Expect(ok).To(BeTrue())
+				Expect(v).To(Equal("value"))
+			})
 		})
 
-		Specify("Fetch blocks", func() {
-			time.AfterFunc(4*evcache.SyncInterval, func() {
-				valueCh <- "value"
+		Context("Fetch callback returns an error", func() {
+			BeforeEach(func() {
+				time.AfterFunc(4*evcache.SyncInterval, func() {
+					valueCh <- errors.New("error fetching")
+				})
 			})
 
-			v, closer, err := c.Fetch("key", 0, func() (interface{}, error) {
-				panic("unexpected fetch callback")
-			})
-			if atomic.CompareAndSwapUint64(&done, 0, 1) {
-				Fail("expected first Fetch to have returned first")
-			}
-			Expect(err).To(BeNil())
-			closer.Close()
-			Expect(v).To(Equal("value"))
-		})
-
-		Specify("Evict blocks", func() {
-			time.AfterFunc(4*evcache.SyncInterval, func() {
-				valueCh <- "value"
+			Specify("Get blocks", func() {
+				_, _, exists := c.Get("key")
+				if atomic.CompareAndSwapUint64(&done, 0, 1) {
+					Fail("expected first Fetch to have returned first")
+				}
+				Expect(exists).To(BeFalse())
 			})
 
-			v, ok := c.Evict("key")
-			if atomic.CompareAndSwapUint64(&done, 0, 1) {
-				Fail("expected first Fetch to have returned first")
-			}
-			Expect(ok).To(BeTrue())
-			Expect(v).To(Equal("value"))
+			Specify("Fetch blocks until first Fetch fails and then fetches a new value", func() {
+				v, closer, err := c.Fetch("key", 0, func() (interface{}, error) {
+					return "new value", nil
+				})
+				if atomic.CompareAndSwapUint64(&done, 0, 1) {
+					Fail("expected first Fetch to have returned first")
+				}
+				Expect(err).To(BeNil())
+				closer.Close()
+				Expect(v).To(Equal("new value"))
+			})
+
+			Specify("Evict blocks and returns false", func() {
+				_, ok := c.Evict("key")
+				if atomic.CompareAndSwapUint64(&done, 0, 1) {
+					Fail("expected first Fetch to have returned first")
+				}
+				Expect(ok).To(BeFalse())
+			})
 		})
 
 		Specify("autoexpiry keeps working", func() {
