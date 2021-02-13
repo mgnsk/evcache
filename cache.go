@@ -165,7 +165,10 @@ func (c *Cache) Evict(key interface{}) (interface{}, bool) {
 		// don't lock it to prevent deadlock.
 		return nil, false
 	}
-	c.records.Delete(key)
+	old, ok := c.records.LoadAndDelete(key)
+	if !ok || old.(*record) != r {
+		panic("evcache: inconsistent map state")
+	}
 	return c.finalize(key, r.(*record))
 }
 
@@ -354,7 +357,10 @@ func (c *Cache) deleteIfEqualsLocked(key interface{}, r *record) bool {
 	if old.(*record) != r {
 		return false
 	}
-	c.records.Delete(key)
+	old, ok = c.records.LoadAndDelete(key)
+	if !ok || old.(*record) != r {
+		panic("evcache: inconsistent map state")
+	}
 	return true
 }
 
