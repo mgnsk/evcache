@@ -30,10 +30,6 @@ type FetchCallback func() (interface{}, error)
 type EvictionCallback func(key, value interface{})
 
 // Cache is an in-memory ordered cache with optional eventually consistent LFU ordering.
-//
-// By default, records are sorted by insertion order.
-//
-// All methods except Close are safe to use concurrently.
 type Cache struct {
 	records    sync.Map
 	pool       sync.Pool
@@ -134,6 +130,10 @@ func (c *Cache) Get(key interface{}) (value interface{}, closer io.Closer, exist
 }
 
 // Set the value in the cache for a key.
+//
+// If the cache has a capacity limit and it is exceeded,
+// the least frequently used record or the eldest is evicted
+// depending on whether LFU ordering is enabled or not.
 func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 	r := c.pool.Get().(*record)
 	r.mu.Lock()
@@ -165,6 +165,10 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 //
 // When the returned value is not used anymore, the caller MUST call closer.Close()
 // or a memory leak will occur.
+//
+// If the cache has a capacity limit and it is exceeded,
+// the least frequently used record or the eldest is evicted
+// depending on whether LFU ordering is enabled or not.
 func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (value interface{}, closer io.Closer, err error) {
 	r := c.pool.Get().(*record)
 	loadOrStore := func() (old *record, loaded bool) {
