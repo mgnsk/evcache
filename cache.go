@@ -220,6 +220,12 @@ func (c *Cache) Len() int {
 // Set may block until a concurrent Fetch callback has returned
 // and then immediately overwrite the value.
 func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
+	var front interface{}
+	defer func() {
+		if front != nil {
+			c.Evict(front)
+		}
+	}()
 	compareAndEvict := func(r *record) {
 		r.mu.Lock()
 		r.mu.Unlock()
@@ -239,9 +245,7 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 				c.runLoop()
 			}
 			r.init(value, ttl)
-			if front := c.list.PushBack(key, r.ring); front != nil {
-				c.Evict(front)
-			}
+			front = c.list.PushBack(key, r.ring)
 			return
 		}
 		compareAndEvict(old.(*record))
@@ -262,6 +266,12 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 // that new value or continues with fetching a new key if the concurrent
 // callback returned an error.
 func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (value interface{}, closer io.Closer, err error) {
+	var front interface{}
+	defer func() {
+		if front != nil {
+			c.Evict(front)
+		}
+	}()
 	r := c.pool.Get().(*record)
 	loadOrStore := func() (old *record, loaded bool) {
 		r.mu.Lock()
@@ -271,6 +281,8 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 		}
 		value, err = f()
 		if err != nil {
+			// Only an inactive record is allowed to
+			// hold c.mu while holding r.mu.
 			c.mu.Lock()
 			defer c.mu.Unlock()
 			c.deleteIfEqualsLocked(key, r)
@@ -281,9 +293,7 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 		}
 		r.init(value, ttl)
 		r.wg.Add(1)
-		if front := c.list.PushBack(key, r.ring); front != nil {
-			c.Evict(front)
-		}
+		front = c.list.PushBack(key, r.ring)
 		return nil, false
 	}
 	for {
@@ -363,9 +373,7 @@ func (c *Cache) finalize(key interface{}, r *record) (interface{}, bool) {
 			defer c.wg.Done()
 			r.wg.Wait()
 			c.pool.Put(r)
-			if c.afterEvict != nil {
-				c.afterEvict(key, value)
-			}
+			c.afterEvict(key, value)
 		}()
 	} else {
 		c.pool.Put(r)
@@ -400,6 +408,8 @@ func (c *Cache) processRecords(now int64) {
 		}
 		if r.expired(now) {
 			if c.deleteIfEqualsLocked(key, r) {
+				// It is safe to lock r while holding c.mu,
+				// the record is already active.
 				c.finalize(key, r)
 			}
 			return true
