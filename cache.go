@@ -34,7 +34,7 @@ type Cache struct {
 	records    sync.Map
 	pool       sync.Pool
 	wg         sync.WaitGroup
-	mu         sync.RWMutex
+	mu         sync.Mutex
 	onceLoop   sync.Once
 	lfuEnabled bool
 	list       *ringList
@@ -103,6 +103,8 @@ func (build Builder) Build() *Cache {
 }
 
 // Exists returns whether a value in the cache exists for key.
+//
+// Exists is a non-blocking operation.
 func (c *Cache) Exists(key interface{}) bool {
 	if r, ok := c.records.Load(key); ok && r.(*record).IsActive() {
 		return true
@@ -115,10 +117,15 @@ func (c *Cache) Exists(key interface{}) bool {
 //
 // When the returned value is not used anymore, the caller MUST call closer.Close()
 // or a memory leak will occur.
+//
+// Get is a non-blocking operation.
 func (c *Cache) Get(key interface{}) (value interface{}, closer io.Closer, exists bool) {
 	for {
 		r, ok := c.records.Load(key)
 		if !ok {
+			return nil, nil, false
+		}
+		if !r.(*record).IsActive() {
 			return nil, nil, false
 		}
 		value, exists = r.(*record).LoadAndHit()
@@ -128,13 +135,94 @@ func (c *Cache) Get(key interface{}) (value interface{}, closer io.Closer, exist
 	}
 }
 
+// Pop evicts and returns the oldest key and value. If LFU ordering is
+// enabled, then the least frequently used key and value.
+//
+// Pop is a non-blocking operation.
+func (c *Cache) Pop() (key, value interface{}) {
+	for {
+		if key = c.list.Pop(); key == nil {
+			return nil, nil
+		}
+		if value, ok := c.Evict(key); ok {
+			return key, value
+		}
+	}
+}
+
+// Evict evicts a key and returns its value.
+//
+// Evict is a non-blocking operation.
+func (c *Cache) Evict(key interface{}) (interface{}, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	r, ok := c.records.Load(key)
+	if !ok {
+		return nil, false
+	}
+	if !r.(*record).IsActive() {
+		// If record is not ready yet or already deleted,
+		// don't lock it to prevent deadlock.
+		return nil, false
+	}
+	c.records.Delete(key)
+	return c.finalize(key, r.(*record))
+}
+
+// Range calls f for each key and value present in the cache in no particular order.
+// If f returns false, Range stops the iteration.
+//
+// Range does not necessarily correspond to any consistent snapshot of the cache's
+// contents: no key will be visited more than once, but if the value for any key
+// is stored or deleted concurrently, Range may reflect any mapping for that key
+// from any point during the Range call.
+//
+// Range is a non-blocking operation.
+func (c *Cache) Range(f func(key, value interface{}) bool) {
+	c.records.Range(func(key, value interface{}) bool {
+		r := value.(*record)
+		if !r.IsActive() {
+			// Skip if Fetch callback is running
+			// or deleted.
+			return true
+		}
+		v, ok := r.Load()
+		if !ok {
+			return true
+		}
+		return f(key, v)
+	})
+}
+
+// Flush evicts all keys from the cache.
+//
+// Flush skips keys whose fetch callback is blocking.
+func (c *Cache) Flush() {
+	c.records.Range(func(key, _ interface{}) bool {
+		c.Evict(key)
+		return true
+	})
+}
+
+// Len returns the number of keys in the cache.
+//
+// Len does not block.
+func (c *Cache) Len() int {
+	return c.list.Len()
+}
+
 // Set the value in the cache for a key.
 //
 // If the cache has a capacity limit and it is exceeded,
 // the least frequently used record or the eldest is evicted
 // depending on whether LFU ordering is enabled or not.
+//
+// Set may block until a concurrent Fetch callback has returned
+// and then immediately overwrite the value.
 func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 	compareAndEvict := func(r *record) {
+		r.mu.Lock()
+		r.mu.Unlock()
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		if c.deleteIfEqualsLocked(key, r) {
@@ -169,6 +257,10 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 // If the cache has a capacity limit and it is exceeded,
 // the least frequently used record or the eldest is evicted
 // depending on whether LFU ordering is enabled or not.
+//
+// Fetch may block until a concurrent Fetch callback has returned and will return
+// that new value or continues with fetching a new key if the concurrent
+// callback returned an error.
 func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (value interface{}, closer io.Closer, err error) {
 	r := c.pool.Get().(*record)
 	loadOrStore := func() (old *record, loaded bool) {
@@ -210,35 +302,12 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 	}
 }
 
-// Range calls f for each key and value present in the cache in no particular order.
-// If f returns false, Range stops the iteration.
-//
-// Range does not necessarily correspond to any consistent snapshot of the cache's
-// contents: no key will be visited more than once, but if the value for any key
-// is stored or deleted concurrently, Range may reflect any mapping for that key
-// from any point during the Range call.
-func (c *Cache) Range(f func(key, value interface{}) bool) {
-	c.records.Range(func(key, value interface{}) bool {
-		r := value.(*record)
-		if !r.IsActive() {
-			// Skip if Fetch callback is running
-			// or deleted.
-			return true
-		}
-		v, ok := r.Load()
-		if !ok {
-			return true
-		}
-		return f(key, v)
-	})
-}
-
 // Do calls f sequentially for each key and value present in the cache
 // in order. If f returns false, Do stops the iteration.
 // When LFU is used, the order is from least to most frequently used,
 // otherwise it is the insertion order with eldest first by default.
 //
-// It is not safe to use Do concurrently with any other method
+// It is not safe to call Do concurrently with any other method
 // except Exists, Get or Fetch if the value is known to exist.
 // f is not allowed to modify the cache.
 func (c *Cache) Do(f func(key, value interface{}) bool) {
@@ -251,44 +320,6 @@ func (c *Cache) Do(f func(key, value interface{}) bool) {
 		}
 		return f(key, r.(*record).value)
 	})
-}
-
-// Pop evicts and returns the oldest key and value. If LFU ordering is
-// enabled, then the least frequently used key and value.
-func (c *Cache) Pop() (key, value interface{}) {
-	for {
-		if key = c.list.Pop(); key == nil {
-			return nil, nil
-		}
-		if value, ok := c.Evict(key); ok {
-			return key, value
-		}
-	}
-}
-
-// Evict evicts a key and returns its value.
-func (c *Cache) Evict(key interface{}) (interface{}, bool) {
-	c.mu.RLock()
-	r, ok := c.records.LoadAndDelete(key)
-	if !ok {
-		c.mu.RUnlock()
-		return nil, false
-	}
-	c.mu.RUnlock()
-	return c.finalize(key, r.(*record))
-}
-
-// Flush evicts all keys from the cache.
-func (c *Cache) Flush() {
-	c.records.Range(func(key, _ interface{}) bool {
-		c.Evict(key)
-		return true
-	})
-}
-
-// Len returns the number of keys in the cache.
-func (c *Cache) Len() int {
-	return c.list.Len()
 }
 
 // Close shuts down the cache, evicts all keys
@@ -313,10 +344,7 @@ func (c *Cache) deleteIfEqualsLocked(key interface{}, r *record) bool {
 	if old.(*record) != r {
 		return false
 	}
-	old, ok = c.records.LoadAndDelete(key)
-	if !ok || old.(*record) != r {
-		panic("evcache: inconsistent map state")
-	}
+	c.records.Delete(key)
 	return true
 }
 

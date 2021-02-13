@@ -174,6 +174,24 @@ var _ = Describe("Fetch callback", func() {
 			close(valueCh)
 		})
 
+		Specify("Evict will not block and returns false", func() {
+			_, ok := c.Evict("key")
+			Expect(ok).To(BeFalse())
+			close(valueCh)
+		})
+
+		Specify("Get will not block and returns false", func() {
+			_, _, ok := c.Get("key")
+			Expect(ok).To(BeFalse())
+			close(valueCh)
+		})
+
+		Specify("Pop will not block and returns false", func() {
+			key, _ := c.Pop()
+			Expect(key).To(BeNil())
+			close(valueCh)
+		})
+
 		Context("Fetch callback does not return an error", func() {
 			BeforeEach(func() {
 				time.AfterFunc(4*evcache.SyncInterval, func() {
@@ -181,17 +199,7 @@ var _ = Describe("Fetch callback", func() {
 				})
 			})
 
-			Specify("Get blocks", func() {
-				v, closer, exists := c.Get("key")
-				if atomic.CompareAndSwapUint64(&done, 0, 1) {
-					Fail("expected first Fetch to have returned first")
-				}
-				Expect(exists).To(BeTrue())
-				closer.Close()
-				Expect(v).To(Equal("value"))
-			})
-
-			Specify("Fetch blocks", func() {
+			Specify("Fetch blocks and returns old value", func() {
 				v, closer, err := c.Fetch("key", 0, func() (interface{}, error) {
 					panic("unexpected fetch callback")
 				})
@@ -203,13 +211,15 @@ var _ = Describe("Fetch callback", func() {
 				Expect(v).To(Equal("value"))
 			})
 
-			Specify("Evict blocks", func() {
-				v, ok := c.Evict("key")
+			Specify("Set blocks and overwrites value", func() {
+				c.Set("key", "value1", 0)
 				if atomic.CompareAndSwapUint64(&done, 0, 1) {
 					Fail("expected first Fetch to have returned first")
 				}
+				value, closer, ok := c.Get("key")
 				Expect(ok).To(BeTrue())
-				Expect(v).To(Equal("value"))
+				closer.Close()
+				Expect(value).To(Equal("value1"))
 			})
 		})
 
@@ -218,14 +228,6 @@ var _ = Describe("Fetch callback", func() {
 				time.AfterFunc(4*evcache.SyncInterval, func() {
 					valueCh <- errors.New("error fetching")
 				})
-			})
-
-			Specify("Get blocks", func() {
-				_, _, exists := c.Get("key")
-				if atomic.CompareAndSwapUint64(&done, 0, 1) {
-					Fail("expected first Fetch to have returned first")
-				}
-				Expect(exists).To(BeFalse())
 			})
 
 			Specify("Fetch blocks until first Fetch fails and then fetches a new value", func() {
@@ -240,12 +242,15 @@ var _ = Describe("Fetch callback", func() {
 				Expect(v).To(Equal("new value"))
 			})
 
-			Specify("Evict blocks and returns false", func() {
-				_, ok := c.Evict("key")
+			Specify("Set blocks and sets the value", func() {
+				c.Set("key", "value1", 0)
 				if atomic.CompareAndSwapUint64(&done, 0, 1) {
 					Fail("expected first Fetch to have returned first")
 				}
-				Expect(ok).To(BeFalse())
+				value, closer, ok := c.Get("key")
+				Expect(ok).To(BeTrue())
+				closer.Close()
+				Expect(value).To(Equal("value1"))
 			})
 		})
 
@@ -259,13 +264,20 @@ var _ = Describe("Fetch callback", func() {
 
 			// Finally send a value and unblock the first key.
 			valueCh <- "value"
-			v, closer, exists := c.Get("key")
-			if atomic.CompareAndSwapUint64(&done, 0, 1) {
-				Fail("expected first Fetch to have returned first")
-			}
-			Expect(exists).To(BeTrue())
-			closer.Close()
-			Expect(v).To(Equal("value"))
+
+			Eventually(func() bool {
+				v, closer, exists := c.Get("key")
+				if !exists {
+					return false
+				}
+				if atomic.CompareAndSwapUint64(&done, 0, 1) {
+					Fail("expected first Fetch to have returned first")
+				}
+				closer.Close()
+				Expect(v).To(Equal("value"))
+				return true
+			}).Should(BeTrue())
+
 			Expect(c.Len()).To(Equal(1))
 		})
 
@@ -396,12 +408,15 @@ var _ = Describe("eviction callback", func() {
 				go func() {
 					defer wg.Done()
 					defer GinkgoRecover()
-					// Evict will block until fetch callback returns.
-					v, ok := c.Evict("key")
-					Expect(ok).To(BeTrue())
-					Expect(v).To(Equal(uint64(0)))
+					for {
+						// Evict won't evict before fetch callback returns.
+						v, ok := c.Evict("key")
+						if ok {
+							Expect(v).To(Equal(uint64(0)))
+							return
+						}
+					}
 				}()
-				// Key can now be evicted but shouldn't until we return.
 				select {
 				case <-evicted:
 					Fail("did not expect evicted")

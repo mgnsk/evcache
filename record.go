@@ -57,11 +57,11 @@ func (r *record) LoadAndHit() (interface{}, bool) {
 }
 
 func (r *record) LoadAndReset() (interface{}, bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	if !atomic.CompareAndSwapUint32(&r.state, stateActive, stateInactive) {
 		return nil, false
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	value := r.value
 	r.value = nil
 	atomic.StoreInt64(&r.expires, 0)
