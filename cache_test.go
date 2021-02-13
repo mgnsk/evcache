@@ -408,14 +408,14 @@ var _ = Describe("eviction callback", func() {
 				go func() {
 					defer wg.Done()
 					defer GinkgoRecover()
-					for {
+					Eventually(func() bool {
 						// Evict won't evict before fetch callback returns.
 						v, ok := c.Evict("key")
 						if ok {
 							Expect(v).To(Equal(uint64(0)))
-							return
 						}
-					}
+						return ok
+					}).Should(BeTrue())
 				}()
 				select {
 				case <-evicted:
