@@ -355,9 +355,7 @@ func (c *Cache) runLoop() {
 				case <-c.stopLoop:
 					return
 				case now := <-ticker.C:
-					c.mu.RLock()
 					c.processRecords(now.UnixNano())
-					c.mu.RUnlock()
 				}
 			}
 		}()
@@ -365,6 +363,8 @@ func (c *Cache) runLoop() {
 }
 
 func (c *Cache) processRecords(now int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.records.Range(func(key, value interface{}) bool {
 		r := value.(*record)
 		if !r.IsActive() {

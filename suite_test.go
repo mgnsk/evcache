@@ -21,7 +21,7 @@ func TestCache(t *testing.T) {
 	RunSpecs(t, "evcache suite")
 }
 
-func BenchmarkLFUContention(b *testing.B) {
+func BenchmarkCapacityParallel(b *testing.B) {
 	c := evcache.New().WithCapacity(2).Build()
 	var key uint64
 	b.ReportAllocs()
@@ -36,7 +36,7 @@ func BenchmarkLFUContention(b *testing.B) {
 	})
 }
 
-func BenchmarkFetchAndEvict(b *testing.B) {
+func BenchmarkFetchAndEvictParallel(b *testing.B) {
 	c := evcache.New().Build()
 	index := uint64(0)
 	errFetch := errors.New("error fetching")
@@ -59,6 +59,55 @@ func BenchmarkFetchAndEvict(b *testing.B) {
 			}
 		}
 	})
+}
+
+func BenchmarkGet(b *testing.B) {
+	c := evcache.New().Build()
+	for i := 0; i < b.N; i++ {
+		c.Set(i, nil, 0)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, closer, _ := c.Get(i)
+		closer.Close()
+	}
+}
+
+func BenchmarkSet(b *testing.B) {
+	c := evcache.New().Build()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		c.Set(i, nil, 0)
+	}
+}
+
+func BenchmarkFetchExists(b *testing.B) {
+	c := evcache.New().Build()
+	for i := 0; i < b.N; i++ {
+		c.Set(i, nil, 0)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, closer, _ := c.Fetch(i, 0, func() (interface{}, error) {
+			panic("unexpected fetch callback")
+		})
+		closer.Close()
+	}
+}
+
+func BenchmarkFetchNotExists(b *testing.B) {
+	c := evcache.New().Build()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, closer, _ := c.Fetch(i, 0, func() (interface{}, error) {
+			return nil, nil
+		})
+		closer.Close()
+	}
 }
 
 func BenchmarkPop(b *testing.B) {
