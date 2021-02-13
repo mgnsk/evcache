@@ -131,13 +131,17 @@ var _ = Describe("Fetch callback", func() {
 		var (
 			done    uint64
 			valueCh chan string
+			wg      sync.WaitGroup
 		)
 		BeforeEach(func() {
 			done = 0
 			valueCh = make(chan string)
+			wg = sync.WaitGroup{}
 
 			fetchStarted := make(chan struct{})
+			wg.Add(1)
 			go func() {
+				defer wg.Done()
 				defer GinkgoRecover()
 				_, closer, _ := c.Fetch("key", 0, func() (interface{}, error) {
 					close(fetchStarted)
@@ -156,6 +160,8 @@ var _ = Describe("Fetch callback", func() {
 			Expect(c.Exists("key")).To(BeFalse())
 			close(valueCh)
 
+			wg.Wait()
+
 			c.Close()
 			Expect(c.Len()).To(BeZero())
 		})
@@ -172,6 +178,8 @@ var _ = Describe("Fetch callback", func() {
 			Expect(exists).To(BeTrue())
 			closer.Close()
 			Expect(v).To(Equal("value"))
+
+			wg.Wait()
 
 			c.Close()
 			Expect(c.Len()).To(BeZero())
@@ -192,6 +200,8 @@ var _ = Describe("Fetch callback", func() {
 			closer.Close()
 			Expect(v).To(Equal("value"))
 
+			wg.Wait()
+
 			c.Close()
 			Expect(c.Len()).To(BeZero())
 		})
@@ -207,6 +217,8 @@ var _ = Describe("Fetch callback", func() {
 			}
 			Expect(ok).To(BeTrue())
 			Expect(v).To(Equal("value"))
+
+			wg.Wait()
 
 			c.Close()
 			Expect(c.Len()).To(BeZero())
@@ -231,6 +243,8 @@ var _ = Describe("Fetch callback", func() {
 			Expect(v).To(Equal("value"))
 			Expect(c.Len()).To(Equal(1))
 
+			wg.Wait()
+
 			c.Close()
 			Expect(c.Len()).To(BeZero())
 		})
@@ -244,13 +258,17 @@ var _ = Describe("Fetch callback", func() {
 				if key == "key" {
 					Fail("expected to skip key")
 				}
-				c.Evict("key1")
+				v, ok := c.Evict("key1")
+				Expect(ok).To(BeTrue())
+				Expect(v).To(Equal("value1"))
 				n++
 				return true
 			})
 			Expect(n).To(Equal(1))
 
 			valueCh <- "value"
+
+			wg.Wait()
 
 			c.Close()
 			Expect(c.Len()).To(BeZero())
@@ -270,7 +288,9 @@ var _ = Describe("deleting values", func() {
 			c.Set("key", "value", 0)
 			Expect(c.Len()).To(Equal(1))
 
-			c.Evict("key")
+			v, ok := c.Evict("key")
+			Expect(ok).To(BeTrue())
+			Expect(v).To(Equal("value"))
 			Expect(c.Exists("key")).To(BeFalse())
 			Expect(c.Len()).To(BeZero())
 
@@ -347,11 +367,20 @@ var _ = Describe("eviction callback", func() {
 	})
 
 	When("record is evicted concurrently with fetch callback", func() {
+		wg := sync.WaitGroup{}
+
 		Specify("eviction callback waits for fetch to finish", func() {
 			value, closer, _ := c.Fetch("key", 0, func() (interface{}, error) {
 				Expect(c.Exists("key")).To(BeFalse())
-				// Evict will block until fetch callback returns.
-				go c.Evict("key")
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					defer GinkgoRecover()
+					// Evict will block until fetch callback returns.
+					v, ok := c.Evict("key")
+					Expect(ok).To(BeTrue())
+					Expect(v).To(Equal(uint64(0)))
+				}()
 				// Key can now be evicted but shouldn't until we return.
 				select {
 				case <-evicted:
@@ -367,6 +396,8 @@ var _ = Describe("eviction callback", func() {
 
 			// Eviction callback waited until Fetch returned a new value.
 			Expect(<-evicted).To(Equal(uint64(0)))
+
+			wg.Wait()
 
 			c.Close()
 			Expect(c.Len()).To(BeZero())
