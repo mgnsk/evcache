@@ -42,6 +42,11 @@ var _ = Describe("setting values", func() {
 			Build()
 	})
 
+	AfterEach(func() {
+		c.Close()
+		Expect(c.Len()).To(BeZero())
+	})
+
 	When("key exists", func() {
 		BeforeEach(func() {
 			c.Set("key", 0, 0)
@@ -52,9 +57,6 @@ var _ = Describe("setting values", func() {
 		Specify("value is replaced", func() {
 			c.Set("key", 1, 0)
 			Expect(c.Len()).To(Equal(1))
-
-			c.Close()
-			Expect(c.Len()).To(BeZero())
 		})
 	})
 })
@@ -79,6 +81,11 @@ var _ = Describe("fetching values", func() {
 			Build()
 	})
 
+	AfterEach(func() {
+		c.Close()
+		Expect(c.Len()).To(BeZero())
+	})
+
 	When("key exists", func() {
 		BeforeEach(func() {
 			value, closer, err := c.Fetch("key", 0, func() (interface{}, error) {
@@ -87,7 +94,6 @@ var _ = Describe("fetching values", func() {
 			Expect(err).To(BeNil())
 			closer.Close()
 			Expect(value).To(Equal("value"))
-
 			Expect(c.Len()).To(Equal(1))
 		})
 
@@ -98,11 +104,7 @@ var _ = Describe("fetching values", func() {
 			Expect(err).To(BeNil())
 			closer.Close()
 			Expect(value).To(Equal("value"))
-
 			Expect(c.Len()).To(Equal(1))
-
-			c.Close()
-			Expect(c.Len()).To(BeZero())
 		})
 	})
 })
@@ -110,11 +112,13 @@ var _ = Describe("fetching values", func() {
 var _ = Describe("Fetch callback", func() {
 	var (
 		evicted chan interface{}
+		wg      sync.WaitGroup
 		c       *evcache.Cache
 	)
 
 	BeforeEach(func() {
 		evicted = make(chan interface{}, 2)
+		wg = sync.WaitGroup{}
 		c = evcache.New().
 			WithEvictionCallback(func(key, _ interface{}) {
 				defer GinkgoRecover()
@@ -127,16 +131,20 @@ var _ = Describe("Fetch callback", func() {
 			Build()
 	})
 
+	AfterEach(func() {
+		wg.Wait()
+		c.Close()
+		Expect(c.Len()).To(BeZero())
+	})
+
 	When("callback blocks and same key is accessed", func() {
 		var (
 			done    uint64
 			valueCh chan string
-			wg      sync.WaitGroup
 		)
 		BeforeEach(func() {
 			done = 0
 			valueCh = make(chan string)
-			wg = sync.WaitGroup{}
 
 			fetchStarted := make(chan struct{})
 			wg.Add(1)
@@ -159,11 +167,6 @@ var _ = Describe("Fetch callback", func() {
 		Specify("Exists will not block and returns false", func() {
 			Expect(c.Exists("key")).To(BeFalse())
 			close(valueCh)
-
-			wg.Wait()
-
-			c.Close()
-			Expect(c.Len()).To(BeZero())
 		})
 
 		Specify("Get blocks", func() {
@@ -178,11 +181,6 @@ var _ = Describe("Fetch callback", func() {
 			Expect(exists).To(BeTrue())
 			closer.Close()
 			Expect(v).To(Equal("value"))
-
-			wg.Wait()
-
-			c.Close()
-			Expect(c.Len()).To(BeZero())
 		})
 
 		Specify("Fetch blocks", func() {
@@ -199,11 +197,6 @@ var _ = Describe("Fetch callback", func() {
 			Expect(err).To(BeNil())
 			closer.Close()
 			Expect(v).To(Equal("value"))
-
-			wg.Wait()
-
-			c.Close()
-			Expect(c.Len()).To(BeZero())
 		})
 
 		Specify("Evict blocks", func() {
@@ -217,11 +210,6 @@ var _ = Describe("Fetch callback", func() {
 			}
 			Expect(ok).To(BeTrue())
 			Expect(v).To(Equal("value"))
-
-			wg.Wait()
-
-			c.Close()
-			Expect(c.Len()).To(BeZero())
 		})
 
 		Specify("autoexpiry keeps working", func() {
@@ -242,11 +230,6 @@ var _ = Describe("Fetch callback", func() {
 			closer.Close()
 			Expect(v).To(Equal("value"))
 			Expect(c.Len()).To(Equal(1))
-
-			wg.Wait()
-
-			c.Close()
-			Expect(c.Len()).To(BeZero())
 		})
 
 		Specify("Range skips the blocking key", func() {
@@ -267,11 +250,6 @@ var _ = Describe("Fetch callback", func() {
 			Expect(n).To(Equal(1))
 
 			valueCh <- "value"
-
-			wg.Wait()
-
-			c.Close()
-			Expect(c.Len()).To(BeZero())
 		})
 	})
 })
@@ -281,6 +259,11 @@ var _ = Describe("deleting values", func() {
 
 	BeforeEach(func() {
 		c = evcache.New().Build()
+	})
+
+	AfterEach(func() {
+		c.Close()
+		Expect(c.Len()).To(BeZero())
 	})
 
 	When("value exists", func() {
@@ -293,9 +276,6 @@ var _ = Describe("deleting values", func() {
 			Expect(v).To(Equal("value"))
 			Expect(c.Exists("key")).To(BeFalse())
 			Expect(c.Len()).To(BeZero())
-
-			c.Close()
-			Expect(c.Len()).To(BeZero())
 		})
 	})
 })
@@ -307,15 +287,17 @@ var _ = Describe("flushing the cache", func() {
 		c = evcache.New().Build()
 	})
 
+	AfterEach(func() {
+		c.Close()
+		Expect(c.Len()).To(BeZero())
+	})
+
 	When("the cache is flushed", func() {
 		Specify("all records are evicted", func() {
 			c.Set("key", "value", 0)
 			Expect(c.Len()).To(Equal(1))
 
 			c.Flush()
-			Expect(c.Len()).To(BeZero())
-
-			c.Close()
 			Expect(c.Len()).To(BeZero())
 		})
 	})
@@ -335,6 +317,11 @@ var _ = Describe("eviction callback", func() {
 				evicted <- value.(uint64)
 			}).
 			Build()
+	})
+
+	AfterEach(func() {
+		c.Close()
+		Expect(c.Len()).To(BeZero())
 	})
 
 	Specify("waits for closers to be closed", func() {
@@ -361,15 +348,11 @@ var _ = Describe("eviction callback", func() {
 		Expect(<-evicted).To(Equal(uint64(1)))
 
 		Expect(c.Len()).To(BeZero())
-
-		c.Close()
-		Expect(c.Len()).To(BeZero())
 	})
 
 	When("record is evicted concurrently with fetch callback", func() {
-		wg := sync.WaitGroup{}
-
 		Specify("eviction callback waits for fetch to finish", func() {
+			wg := sync.WaitGroup{}
 			value, closer, _ := c.Fetch("key", 0, func() (interface{}, error) {
 				Expect(c.Exists("key")).To(BeFalse())
 				wg.Add(1)
@@ -398,9 +381,6 @@ var _ = Describe("eviction callback", func() {
 			Expect(<-evicted).To(Equal(uint64(0)))
 
 			wg.Wait()
-
-			c.Close()
-			Expect(c.Len()).To(BeZero())
 		})
 	})
 })
@@ -419,6 +399,12 @@ var _ = Describe("Fetch fails with an error", func() {
 		c = evcache.New().Build()
 	})
 
+	AfterEach(func() {
+		wg.Wait()
+		c.Close()
+		Expect(c.Len()).To(BeZero())
+	})
+
 	Specify("no records are cached", func() {
 		wg.Add(n)
 		for i := 0; i < n; i++ {
@@ -434,11 +420,6 @@ var _ = Describe("Fetch fails with an error", func() {
 				Expect(c.Len()).To(BeZero())
 			}()
 		}
-
-		wg.Wait()
-
-		c.Close()
-		Expect(c.Len()).To(BeZero())
 	})
 
 	When("record is evicted concurrently with fetch callback", func() {
@@ -474,11 +455,6 @@ var _ = Describe("Fetch fails with an error", func() {
 					c.Evict("key")
 				}()
 			}
-
-			wg.Wait()
-
-			c.Close()
-			Expect(c.Len()).To(BeZero())
 		})
 	})
 })
@@ -499,6 +475,11 @@ var _ = Describe("ranging over values", func() {
 			Build()
 	})
 
+	AfterEach(func() {
+		c.Close()
+		Expect(c.Len()).To(BeZero())
+	})
+
 	Specify("callback does not block record", func() {
 		c.Set("key", "value", 0)
 		Expect(c.Len()).To(Equal(1))
@@ -517,9 +498,6 @@ var _ = Describe("ranging over values", func() {
 			Expect(c.Len()).To(BeZero())
 			return true
 		})
-
-		c.Close()
-		Expect(c.Len()).To(BeZero())
 	})
 })
 
@@ -539,6 +517,11 @@ var _ = Describe("ordered iteration of records", func() {
 		Expect(c.Len()).To(Equal(n))
 	})
 
+	AfterEach(func() {
+		c.Close()
+		Expect(c.Len()).To(BeZero())
+	})
+
 	Specify("Do is ordered", func() {
 		var keys []int
 		c.Do(func(key, value interface{}) bool {
@@ -548,9 +531,6 @@ var _ = Describe("ordered iteration of records", func() {
 		})
 		Expect(keys).To(HaveLen(n))
 		Expect(sort.IntsAreSorted(keys)).To(BeTrue())
-
-		c.Close()
-		Expect(c.Len()).To(BeZero())
 	})
 })
 
@@ -573,6 +553,11 @@ var _ = Describe("overflow when setting values", func() {
 			Build()
 	})
 
+	AfterEach(func() {
+		c.Close()
+		Expect(c.Len()).To(BeZero())
+	})
+
 	When("Set causes an overflow", func() {
 		Specify("eventually overflowed records are evicted", func() {
 			for i := 0; i < n+overflow; i++ {
@@ -583,9 +568,6 @@ var _ = Describe("overflow when setting values", func() {
 			Eventually(func() uint64 {
 				return atomic.LoadUint64(&evicted)
 			}).Should(Equal(uint64(overflow)))
-
-			c.Close()
-			Expect(c.Len()).To(BeZero())
 		})
 	})
 
@@ -602,9 +584,6 @@ var _ = Describe("overflow when setting values", func() {
 			Eventually(func() uint64 {
 				return atomic.LoadUint64(&evicted)
 			}).Should(Equal(uint64(overflow)))
-
-			c.Close()
-			Expect(c.Len()).To(BeZero())
 		})
 	})
 
@@ -642,9 +621,6 @@ var _ = Describe("overflow when setting values", func() {
 			Eventually(func() uint64 {
 				return atomic.LoadUint64(&evicted)
 			}).Should(Equal(uint64(overflow)))
-
-			c.Close()
-			Expect(c.Len()).To(BeZero())
 		},
 		Entry(
 			"Fetch",
@@ -730,6 +706,11 @@ var _ = Describe("overflow eviction order", func() {
 		key = 0
 	})
 
+	AfterEach(func() {
+		c.Close()
+		Expect(c.Len()).To(BeZero())
+	})
+
 	Context("LFU disabled", func() {
 		BeforeEach(func() {
 			c = evcache.New().
@@ -746,9 +727,6 @@ var _ = Describe("overflow eviction order", func() {
 
 			keys := overflow()
 			Expect(sort.IntsAreSorted(keys)).To(BeTrue())
-
-			c.Close()
-			Expect(c.Len()).To(BeZero())
 		})
 
 		Specify("pop order is sorted by eldest keys first", func() {
@@ -756,9 +734,6 @@ var _ = Describe("overflow eviction order", func() {
 
 			keys := pop()
 			Expect(sort.IntsAreSorted(keys)).To(BeTrue())
-
-			c.Close()
-			Expect(c.Len()).To(BeZero())
 		})
 	})
 
@@ -782,9 +757,6 @@ var _ = Describe("overflow eviction order", func() {
 
 				keys := overflow()
 				Expect(sort.IsSorted(sort.Reverse(sort.IntSlice(keys)))).To(BeTrue())
-
-				c.Close()
-				Expect(c.Len()).To(BeZero())
 			})
 		})
 
@@ -796,9 +768,6 @@ var _ = Describe("overflow eviction order", func() {
 
 				keys := overflow()
 				Expect(sort.IsSorted(sort.Reverse(sort.IntSlice(keys)))).To(BeTrue())
-
-				c.Close()
-				Expect(c.Len()).To(BeZero())
 			})
 		})
 
@@ -809,9 +778,6 @@ var _ = Describe("overflow eviction order", func() {
 
 			keys := pop()
 			Expect(sort.IsSorted(sort.Reverse(sort.IntSlice(keys)))).To(BeTrue())
-
-			c.Close()
-			Expect(c.Len()).To(BeZero())
 		})
 	})
 })
