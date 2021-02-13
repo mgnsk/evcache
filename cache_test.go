@@ -216,6 +216,28 @@ var _ = Describe("Fetch callback", func() {
 			Expect(c.Len()).To(BeZero())
 		})
 
+		Specify("Evict blocks", func() {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				defer GinkgoRecover()
+				v, ok := c.Evict("key")
+				if atomic.CompareAndSwapUint64(&done, 0, 1) {
+					Fail("expected first Fetch to have returned first")
+				}
+				Expect(ok).To(BeTrue())
+				Expect(v).To(Equal("value"))
+			}()
+			time.AfterFunc(4*evcache.SyncInterval, func() {
+				valueCh <- "value"
+			})
+
+			wg.Wait()
+
+			c.Close()
+			Expect(c.Len()).To(BeZero())
+		})
+
 		Specify("autoexpiry keeps working", func() {
 			// Verify other keys can expire.
 			c.Set("key1", "value1", 4*evcache.SyncInterval)
@@ -365,13 +387,15 @@ var _ = Describe("eviction callback", func() {
 		Specify("eviction callback waits for fetch to finish", func() {
 			value, closer, _ := c.Fetch("key", 0, func() (interface{}, error) {
 				Expect(c.Exists("key")).To(BeFalse())
-				c.Evict("key")
+				// Evict will block until fetch callback returns.
+				go c.Evict("key")
 				// Key can now be evicted but shouldn't until we return.
 				select {
 				case <-evicted:
 					Fail("did not expect evicted")
 				case <-time.After(4 * evcache.SyncInterval):
 				}
+
 				return uint64(0), nil
 			})
 			Expect(closer).NotTo(BeNil())
@@ -424,28 +448,6 @@ var _ = Describe("Fetch fails with an error", func() {
 	})
 
 	When("record is evicted concurrently with fetch callback", func() {
-		Specify("failed fetch will not overwrite succeeded one", func() {
-			_, _, err := c.Fetch("key", 0, func() (interface{}, error) {
-				c.Evict("key")
-				v, closer, err := c.Fetch("key", 0, func() (interface{}, error) {
-					return "second value", nil
-				})
-				Expect(err).To(BeNil())
-				closer.Close()
-				Expect(v).To(Equal("second value"))
-
-				return nil, errFetch
-			})
-
-			Expect(errors.Is(err, errFetch)).To(BeTrue())
-			Expect(c.Len()).To(Equal(1))
-
-			value, closer, exists := c.Get("key")
-			Expect(exists).To(BeTrue())
-			closer.Close()
-			Expect(value).To(Equal("second value"))
-		})
-
 		Specify("cache stays consistent", func() {
 			for i := 0; i < n; i++ {
 				wg.Add(1)

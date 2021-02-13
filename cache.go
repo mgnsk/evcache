@@ -146,7 +146,7 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 			}
 			r.init(value, ttl)
 			if front := c.list.PushBack(key, r.ring); front != nil {
-				c.LoadAndEvict(front)
+				c.Evict(front)
 			}
 			return
 		}
@@ -154,7 +154,7 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 			c.mu.Lock()
 			defer c.mu.Unlock()
 			if c.deleteIfEqualsLocked(key, old.(*record)) {
-				c.finalizeSync(key, old.(*record))
+				c.finalize(key, old.(*record))
 			}
 		}()
 	}
@@ -190,7 +190,7 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 		r.init(value, ttl)
 		r.wg.Add(1)
 		if front := c.list.PushBack(key, r.ring); front != nil {
-			c.LoadAndEvict(front)
+			c.Evict(front)
 		}
 		return nil, false
 	}
@@ -239,8 +239,7 @@ func (c *Cache) Range(f func(key, value interface{}) bool) {
 // otherwise it is the insertion order with eldest first by default.
 //
 // It is not safe to use Do concurrently with any other method
-// except Exists and Get or a deadlock may occur. f is not allowed
-// to modify the cache.
+// except Exists and Get. f is not allowed to modify the cache.
 func (c *Cache) Do(f func(key, value interface{}) bool) {
 	c.loopMu.Lock()
 	defer c.loopMu.Unlock()
@@ -249,11 +248,7 @@ func (c *Cache) Do(f func(key, value interface{}) bool) {
 		if !ok {
 			panic("evcache: Do used concurrently")
 		}
-		v, ok := r.(*record).Load()
-		if !ok {
-			panic("evcache: Do used concurrently")
-		}
-		return f(key, v)
+		return f(key, r.(*record).value)
 	})
 }
 
@@ -264,14 +259,14 @@ func (c *Cache) Pop() (key, value interface{}) {
 		if key = c.list.Pop(); key == nil {
 			return nil, nil
 		}
-		if value, ok := c.LoadAndEvict(key); ok {
+		if value, ok := c.Evict(key); ok {
 			return key, value
 		}
 	}
 }
 
-// LoadAndEvict evicts a key and returns its value.
-func (c *Cache) LoadAndEvict(key interface{}) (interface{}, bool) {
+// Evict evicts a key and returns its value.
+func (c *Cache) Evict(key interface{}) (interface{}, bool) {
 	c.mu.RLock()
 	r, ok := c.records.LoadAndDelete(key)
 	if !ok {
@@ -279,24 +274,13 @@ func (c *Cache) LoadAndEvict(key interface{}) (interface{}, bool) {
 		return nil, false
 	}
 	c.mu.RUnlock()
-	return c.finalizeSync(key, r.(*record))
-}
-
-// Evict a key and its value from the cache.
-func (c *Cache) Evict(key interface{}) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	r, ok := c.records.LoadAndDelete(key)
-	if !ok {
-		return
-	}
-	c.finalizeAsync(key, r.(*record))
+	return c.finalize(key, r.(*record))
 }
 
 // Flush evicts all keys from the cache.
 func (c *Cache) Flush() {
 	c.records.Range(func(key, _ interface{}) bool {
-		c.LoadAndEvict(key)
+		c.Evict(key)
 		return true
 	})
 }
@@ -335,7 +319,7 @@ func (c *Cache) deleteIfEqualsLocked(key interface{}, r *record) bool {
 	return true
 }
 
-func (c *Cache) remove(key interface{}, r *record) (interface{}, bool) {
+func (c *Cache) finalize(key interface{}, r *record) (interface{}, bool) {
 	value, ok := r.LoadAndReset()
 	if !ok {
 		// An inactive record which had a concurrent Fetch and failed.
@@ -343,14 +327,6 @@ func (c *Cache) remove(key interface{}, r *record) (interface{}, bool) {
 	}
 	if k := c.list.Remove(r.ring); k != nil && k != key {
 		panic("evcache: invalid ring")
-	}
-	return value, true
-}
-
-func (c *Cache) finalizeSync(key interface{}, r *record) (interface{}, bool) {
-	value, ok := c.remove(key, r)
-	if !ok {
-		return nil, false
 	}
 	if c.afterEvict != nil {
 		c.wg.Add(1)
@@ -366,22 +342,6 @@ func (c *Cache) finalizeSync(key interface{}, r *record) (interface{}, bool) {
 		c.pool.Put(r)
 	}
 	return value, true
-}
-
-func (c *Cache) finalizeAsync(key interface{}, r *record) {
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
-		value, ok := c.remove(key, r)
-		if !ok {
-			return
-		}
-		r.wg.Wait()
-		c.pool.Put(r)
-		if c.afterEvict != nil {
-			c.afterEvict(key, value)
-		}
-	}()
 }
 
 func (c *Cache) runLoop() {
@@ -413,7 +373,7 @@ func (c *Cache) processRecords(now int64) {
 			c.mu.Lock()
 			defer c.mu.Unlock()
 			if c.deleteIfEqualsLocked(key, r) {
-				c.finalizeSync(key, r)
+				c.finalize(key, r)
 			}
 			return true
 		}
