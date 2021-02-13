@@ -196,7 +196,7 @@ func (c *Cache) Range(f func(key, value interface{}) bool) {
 
 // Flush evicts all keys from the cache.
 //
-// Flush skips keys whose fetch callback is blocking.
+// Flush skips keys whose fetch callback is currently running.
 func (c *Cache) Flush() {
 	c.records.Range(func(key, _ interface{}) bool {
 		c.Evict(key)
