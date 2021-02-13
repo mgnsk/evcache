@@ -36,7 +36,6 @@ type Cache struct {
 	wg         sync.WaitGroup
 	mu         sync.RWMutex
 	onceLoop   sync.Once
-	loopMu     sync.Mutex
 	lfuEnabled bool
 	list       *ringList
 	afterEvict EvictionCallback
@@ -135,6 +134,13 @@ func (c *Cache) Get(key interface{}) (value interface{}, closer io.Closer, exist
 // the least frequently used record or the eldest is evicted
 // depending on whether LFU ordering is enabled or not.
 func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
+	compareAndEvict := func(r *record) {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if c.deleteIfEqualsLocked(key, r) {
+			c.finalize(key, r)
+		}
+	}
 	r := c.pool.Get().(*record)
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -150,13 +156,7 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 			}
 			return
 		}
-		func() {
-			c.mu.Lock()
-			defer c.mu.Unlock()
-			if c.deleteIfEqualsLocked(key, old.(*record)) {
-				c.finalize(key, old.(*record))
-			}
-		}()
+		compareAndEvict(old.(*record))
 	}
 }
 
@@ -239,10 +239,11 @@ func (c *Cache) Range(f func(key, value interface{}) bool) {
 // otherwise it is the insertion order with eldest first by default.
 //
 // It is not safe to use Do concurrently with any other method
-// except Exists and Get. f is not allowed to modify the cache.
+// except Exists, Get or Fetch if the value is known to exist.
+// f is not allowed to modify the cache.
 func (c *Cache) Do(f func(key, value interface{}) bool) {
-	c.loopMu.Lock()
-	defer c.loopMu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.list.Do(func(key interface{}) bool {
 		r, ok := c.records.Load(key)
 		if !ok {
@@ -354,9 +355,9 @@ func (c *Cache) runLoop() {
 				case <-c.stopLoop:
 					return
 				case now := <-ticker.C:
-					c.loopMu.Lock()
+					c.mu.RLock()
 					c.processRecords(now.UnixNano())
-					c.loopMu.Unlock()
+					c.mu.RUnlock()
 				}
 			}
 		}()
@@ -370,8 +371,6 @@ func (c *Cache) processRecords(now int64) {
 			return true
 		}
 		if r.expired(now) {
-			c.mu.Lock()
-			defer c.mu.Unlock()
 			if c.deleteIfEqualsLocked(key, r) {
 				c.finalize(key, r)
 			}
