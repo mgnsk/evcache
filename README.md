@@ -18,6 +18,6 @@ Eventually the list becomes LFU ordered.
 The cache provides an eviction callback for each record which can be used to safely
 close stored values like network connections after all usage has stopped. The usage is tracked
 by returning a waitgroup wrapped in `io.Closer` whenever a record is read which
-if closed calls `wg.Done()` on the record. If a record is evicted or expires while there are active users,
-a new record may be stored under the same key while the old record exists only referenced by active users.
-The eviction callback for the old record waits for its waitgroup.
+if closed calls `wg.Done()`. If a record is evicted or expires while there are active users,
+a new record may be stored under the same key while the old record value still exists referenced by active users
+and awaiting eviction callback.
