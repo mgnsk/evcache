@@ -313,7 +313,7 @@ func (c *Cache) deleteIfEqualsLocked(key interface{}, r *record) bool {
 		return false
 	}
 	old, ok = c.records.LoadAndDelete(key)
-	if ok && old.(*record) != r {
+	if !ok || old.(*record) != r {
 		panic("evcache: inconsistent map state")
 	}
 	return true
