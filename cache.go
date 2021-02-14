@@ -106,7 +106,7 @@ func (build Builder) Build() *Cache {
 //
 // Exists is a non-blocking operation.
 func (c *Cache) Exists(key interface{}) bool {
-	if r, ok := c.records.Load(key); ok && r.(*record).IsActive() {
+	if r, ok := c.records.Load(key); ok && r.(*record).Active() {
 		return true
 	}
 	return false
@@ -125,7 +125,7 @@ func (c *Cache) Get(key interface{}) (value interface{}, closer io.Closer, exist
 		if !ok {
 			return nil, nil, false
 		}
-		if !r.(*record).IsActive() {
+		if !r.(*record).Active() {
 			return nil, nil, false
 		}
 		value, exists = r.(*record).LoadAndHit()
@@ -160,7 +160,7 @@ func (c *Cache) Evict(key interface{}) (interface{}, bool) {
 	if !ok {
 		return nil, false
 	}
-	if !r.(*record).IsActive() {
+	if !r.(*record).Active() {
 		// If record is not ready yet or already deleted,
 		// don't lock it to prevent deadlock.
 		return nil, false
@@ -184,7 +184,7 @@ func (c *Cache) Evict(key interface{}) (interface{}, bool) {
 func (c *Cache) Range(f func(key, value interface{}) bool) {
 	c.records.Range(func(key, value interface{}) bool {
 		r := value.(*record)
-		if !r.IsActive() {
+		if !r.Active() {
 			// Skip if Fetch callback is running
 			// or deleted.
 			return true
@@ -247,8 +247,8 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 			if ttl > 0 {
 				c.runLoop()
 			}
-			r.init(value, ttl)
 			front = c.list.PushBack(key, r.ring)
+			r.init(value, ttl)
 			return
 		}
 		compareAndEvict(old.(*record))
@@ -294,9 +294,9 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 		if ttl > 0 {
 			c.runLoop()
 		}
+		front = c.list.PushBack(key, r.ring)
 		r.init(value, ttl)
 		r.wg.Add(1)
-		front = c.list.PushBack(key, r.ring)
 		return nil, false
 	}
 	for {
@@ -409,7 +409,7 @@ func (c *Cache) processRecords(now int64) {
 	defer c.mu.Unlock()
 	c.records.Range(func(key, value interface{}) bool {
 		r := value.(*record)
-		if !r.IsActive() {
+		if !r.Active() {
 			return true
 		}
 		if r.expired(now) {

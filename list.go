@@ -70,9 +70,7 @@ func (l *ringList) MoveForward(r *ring.Ring, delta uint32) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if r.Value == nil {
-		// An overflowed ring which was already unlinked by l.Push
-		// but the record not yet evicted.
-		return
+		panic("evcache: invalid list element")
 	}
 	l.move(r, delta)
 }
@@ -117,9 +115,7 @@ func (l *ringList) unlink(r *ring.Ring) (key interface{}) {
 	} else if r == l.back {
 		l.back = r.Prev()
 	}
-	if r.Prev().Unlink(1) != r {
-		panic("evcache: invalid ring")
-	}
+	r.Prev().Unlink(1)
 	l.size--
 	key = r.Value
 	r.Value = nil
@@ -140,8 +136,6 @@ func (l *ringList) move(r *ring.Ring, delta uint32) {
 			break
 		}
 	}
-	if r.Prev().Unlink(1) != r {
-		panic("evcache: invalid ring")
-	}
+	r.Prev().Unlink(1)
 	target.Link(r)
 }

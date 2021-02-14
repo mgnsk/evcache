@@ -642,27 +642,13 @@ var _ = Describe("overflow when setting values", func() {
 	DescribeTable(
 		"concurrent overflow",
 		func(cb func(int)) {
-			var (
-				wg          sync.WaitGroup
-				concurrency = 4
-			)
-
-			sem := make(chan struct{}, concurrency)
-
+			var wg sync.WaitGroup
 			for i := 0; i < n+overflow; i++ {
 				i := i
 				wg.Add(1)
-				sem <- struct{}{}
 				go func() {
 					defer wg.Done()
 					defer GinkgoRecover()
-					defer func() {
-						select {
-						case <-sem:
-						default:
-						}
-					}()
-
 					cb(i)
 					Expect(c.Len()).To(BeNumerically("<=", n), "capacity cannot be exceeded")
 				}()

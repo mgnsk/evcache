@@ -32,14 +32,14 @@ func (r *record) Close() error {
 	return nil
 }
 
-func (r *record) IsActive() bool {
+func (r *record) Active() bool {
 	return atomic.LoadUint32(&r.state) == stateActive
 }
 
 func (r *record) Load() (interface{}, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if !r.IsActive() {
+	if !r.Active() {
 		return nil, false
 	}
 	return r.value, true
@@ -48,7 +48,7 @@ func (r *record) Load() (interface{}, bool) {
 func (r *record) LoadAndHit() (interface{}, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if !r.IsActive() {
+	if !r.Active() {
 		return nil, false
 	}
 	atomic.AddUint32(&r.hits, 1)
