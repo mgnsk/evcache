@@ -243,13 +243,12 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 			return
 		}
 		oldrec := old.(*record)
-		if oldrec.Active() {
-			c.Evict(key)
-		} else {
+		if !oldrec.Active() {
 			// Wait for any pending Fetch callback.
 			oldrec.mu.Lock()
 			oldrec.mu.Unlock()
 		}
+		c.Evict(key)
 	}
 }
 

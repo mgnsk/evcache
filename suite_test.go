@@ -74,12 +74,21 @@ func BenchmarkGet(b *testing.B) {
 	}
 }
 
-func BenchmarkSet(b *testing.B) {
+func BenchmarkSetNotExists(b *testing.B) {
 	c := evcache.New().Build()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		c.Set(i, nil, 0)
+	}
+}
+
+func BenchmarkSetExists(b *testing.B) {
+	c := evcache.New().Build()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		c.Set(0, nil, 0)
 	}
 }
 
