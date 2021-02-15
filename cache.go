@@ -161,7 +161,7 @@ func (c *Cache) Evict(key interface{}) (interface{}, bool) {
 		return nil, false
 	}
 	if !r.(*record).Active() {
-		// If record is not ready yet or already deleted,
+		// If record is not ready yet,
 		// don't lock it to prevent deadlock.
 		return nil, false
 	}
@@ -169,7 +169,7 @@ func (c *Cache) Evict(key interface{}) (interface{}, bool) {
 	if !ok || old.(*record) != r {
 		panic("evcache: inconsistent map state")
 	}
-	return c.finalize(key, r.(*record))
+	return c.finalize(key, r.(*record)), true
 }
 
 // Range calls f for each key and value present in the cache in no particular order.
@@ -229,15 +229,6 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 			c.Evict(front)
 		}
 	}()
-	compareAndEvict := func(r *record) {
-		r.mu.Lock()
-		r.mu.Unlock()
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		if c.deleteIfEqualsLocked(key, r) {
-			c.finalize(key, r)
-		}
-	}
 	r := c.pool.Get().(*record)
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -251,7 +242,13 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 			r.init(value, ttl)
 			return
 		}
-		compareAndEvict(old.(*record))
+		oldrec := old.(*record)
+		if !oldrec.Active() {
+			// Wait for any pending Fetch callback.
+			oldrec.mu.Lock()
+			oldrec.mu.Unlock()
+		}
+		c.Evict(key)
 	}
 }
 
@@ -284,11 +281,11 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 		}
 		value, err = f()
 		if err != nil {
-			// Only an inactive record is allowed to
+			// Only a not yet active record is allowed to
 			// hold c.mu while holding r.mu.
 			c.mu.Lock()
 			defer c.mu.Unlock()
-			c.deleteIfEqualsLocked(key, r)
+			c.delete(key, r)
 			return nil, false
 		}
 		if ttl > 0 {
@@ -349,27 +346,22 @@ func (c *Cache) Close() error {
 	return nil
 }
 
-func (c *Cache) deleteIfEqualsLocked(key interface{}, r *record) bool {
+func (c *Cache) delete(key interface{}, r *record) {
 	old, ok := c.records.Load(key)
 	if !ok {
-		return false
+		panic("evcache: inconsistent map state")
 	}
 	if old.(*record) != r {
-		return false
+		panic("evcache: inconsistent map state")
 	}
 	old, ok = c.records.LoadAndDelete(key)
 	if !ok || old.(*record) != r {
 		panic("evcache: inconsistent map state")
 	}
-	return true
 }
 
-func (c *Cache) finalize(key interface{}, r *record) (interface{}, bool) {
-	value, ok := r.LoadAndReset()
-	if !ok {
-		// An inactive record which had a concurrent Fetch and failed.
-		return nil, false
-	}
+func (c *Cache) finalize(key interface{}, r *record) interface{} {
+	value := r.LoadAndReset()
 	if k := c.list.Remove(r.ring); k != nil && k != key {
 		panic("evcache: invalid ring")
 	}
@@ -384,7 +376,7 @@ func (c *Cache) finalize(key interface{}, r *record) (interface{}, bool) {
 	} else {
 		c.pool.Put(r)
 	}
-	return value, true
+	return value
 }
 
 func (c *Cache) runLoop() {
@@ -413,11 +405,10 @@ func (c *Cache) processRecords(now int64) {
 			return true
 		}
 		if r.expired(now) {
-			if c.deleteIfEqualsLocked(key, r) {
-				// It is safe to lock r while holding c.mu,
-				// the record is already active.
-				c.finalize(key, r)
-			}
+			c.delete(key, r)
+			// It is safe to lock r while holding c.mu,
+			// the record is already active.
+			c.finalize(key, r)
 			return true
 		}
 		if c.lfuEnabled {

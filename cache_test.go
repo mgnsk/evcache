@@ -474,7 +474,7 @@ var _ = Describe("Fetch fails with an error", func() {
 		}
 	})
 
-	When("record is evicted concurrently with fetch callback", func() {
+	When("Set and Evict concurrently with fetch callback", func() {
 		Specify("cache stays consistent", func() {
 			for i := 0; i < n; i++ {
 				wg.Add(1)
@@ -489,8 +489,22 @@ var _ = Describe("Fetch fails with an error", func() {
 						Expect(value).To(BeNil())
 					} else {
 						closer.Close()
-						Expect(value).To(Equal("second value"))
+						Expect(value).To(Equal("value"))
 					}
+				}()
+
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					defer GinkgoRecover()
+					c.Set("key", "value", 0)
+				}()
+
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					defer GinkgoRecover()
+					c.Evict("key")
 				}()
 
 				wg.Add(1)
@@ -499,12 +513,11 @@ var _ = Describe("Fetch fails with an error", func() {
 					defer GinkgoRecover()
 					c.Evict("key")
 					value, closer, err := c.Fetch("key", 0, func() (interface{}, error) {
-						return "second value", nil
+						return "value", nil
 					})
 					Expect(err).To(BeNil())
 					closer.Close()
-					Expect(value).To(Equal("second value"))
-					c.Evict("key")
+					Expect(value).To(Equal("value"))
 				}()
 			}
 		})
@@ -608,6 +621,7 @@ var _ = Describe("overflow when setting values", func() {
 	AfterEach(func() {
 		c.Close()
 		Expect(c.Len()).To(BeZero())
+		Expect(evicted).To(Equal(uint64(n + overflow)))
 	})
 
 	When("Set causes an overflow", func() {
@@ -616,10 +630,6 @@ var _ = Describe("overflow when setting values", func() {
 				c.Set(i, 0, 0)
 				Expect(c.Len()).To(BeNumerically("<=", n), "capacity cannot be exceeded")
 			}
-
-			Eventually(func() uint64 {
-				return atomic.LoadUint64(&evicted)
-			}).Should(Equal(uint64(overflow)))
 		})
 	})
 
@@ -632,10 +642,6 @@ var _ = Describe("overflow when setting values", func() {
 				closer.Close()
 				Expect(c.Len()).To(BeNumerically("<=", n), "capacity cannot be exceeded")
 			}
-
-			Eventually(func() uint64 {
-				return atomic.LoadUint64(&evicted)
-			}).Should(Equal(uint64(overflow)))
 		})
 	})
 
@@ -655,10 +661,6 @@ var _ = Describe("overflow when setting values", func() {
 			}
 
 			wg.Wait()
-
-			Eventually(func() uint64 {
-				return atomic.LoadUint64(&evicted)
-			}).Should(Equal(uint64(overflow)))
 		},
 		Entry(
 			"Fetch",

@@ -56,9 +56,9 @@ func (r *record) LoadAndHit() (interface{}, bool) {
 	return r.value, true
 }
 
-func (r *record) LoadAndReset() (interface{}, bool) {
+func (r *record) LoadAndReset() interface{} {
 	if !atomic.CompareAndSwapUint32(&r.state, stateActive, stateInactive) {
-		return nil, false
+		panic("evcache: invalid record state")
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -66,7 +66,7 @@ func (r *record) LoadAndReset() (interface{}, bool) {
 	r.value = nil
 	atomic.StoreInt64(&r.expires, 0)
 	atomic.StoreUint32(&r.hits, 0)
-	return value, true
+	return value
 }
 
 func (r *record) init(value interface{}, ttl time.Duration) {
