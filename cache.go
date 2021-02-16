@@ -121,16 +121,17 @@ func (c *Cache) Exists(key interface{}) bool {
 // Get is a non-blocking operation.
 func (c *Cache) Get(key interface{}) (value interface{}, closer io.Closer, exists bool) {
 	for {
-		r, ok := c.records.Load(key)
+		old, ok := c.records.Load(key)
 		if !ok {
 			return nil, nil, false
 		}
-		if !r.(*record).Active() {
+		r := old.(*record)
+		if !r.Active() {
 			return nil, nil, false
 		}
-		value, exists = r.(*record).LoadAndHit()
+		value, exists = r.LoadAndHit()
 		if exists {
-			return value, r.(io.Closer), true
+			return value, r, true
 		}
 	}
 }
@@ -156,20 +157,18 @@ func (c *Cache) Pop() (key, value interface{}) {
 func (c *Cache) Evict(key interface{}) (interface{}, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	r, ok := c.records.Load(key)
+	old, ok := c.records.Load(key)
 	if !ok {
 		return nil, false
 	}
-	if !r.(*record).Active() {
+	r := old.(*record)
+	if !r.Active() {
 		// If record is not ready yet,
 		// don't lock it to prevent deadlock.
 		return nil, false
 	}
-	old, ok := c.records.LoadAndDelete(key)
-	if !ok || old.(*record) != r {
-		panic("evcache: inconsistent map state")
-	}
-	return c.finalize(key, r.(*record)), true
+	c.delete(key, r)
+	return c.finalize(key, r), true
 }
 
 // Range calls f for each key and value present in the cache in no particular order.
@@ -229,24 +228,24 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 			c.Evict(front)
 		}
 	}()
-	r := c.pool.Get().(*record)
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	new := c.pool.Get().(*record)
+	new.mu.Lock()
+	defer new.mu.Unlock()
 	for {
-		old, loaded := c.records.LoadOrStore(key, r)
+		old, loaded := c.records.LoadOrStore(key, new)
 		if !loaded {
+			new.init(value, ttl)
+			front = c.list.PushBack(key, new.ring)
 			if ttl > 0 {
 				c.runLoop()
 			}
-			front = c.list.PushBack(key, r.ring)
-			r.init(value, ttl)
 			return
 		}
-		oldrec := old.(*record)
-		if !oldrec.Active() {
+		r := old.(*record)
+		if !r.Active() {
 			// Wait for any pending Fetch callback.
-			oldrec.mu.Lock()
-			oldrec.mu.Unlock()
+			r.mu.Lock()
+			r.mu.Unlock()
 		}
 		c.Evict(key)
 	}
@@ -272,42 +271,42 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 			c.Evict(front)
 		}
 	}()
-	r := c.pool.Get().(*record)
+	new := c.pool.Get().(*record)
+	new.mu.Lock()
+	defer new.mu.Unlock()
 	loadOrStore := func() (old *record, loaded bool) {
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		if old, loaded := c.records.LoadOrStore(key, r); loaded {
+		if old, loaded := c.records.LoadOrStore(key, new); loaded {
 			return old.(*record), true
 		}
 		value, err = f()
 		if err != nil {
 			// Only a not yet active record is allowed to
-			// hold c.mu while holding r.mu.
+			// lock c.mu while holding r.mu.
 			c.mu.Lock()
 			defer c.mu.Unlock()
-			c.delete(key, r)
+			c.delete(key, new)
 			return nil, false
 		}
 		if ttl > 0 {
 			c.runLoop()
 		}
-		front = c.list.PushBack(key, r.ring)
-		r.init(value, ttl)
-		r.wg.Add(1)
+		new.init(value, ttl)
+		new.wg.Add(1)
+		front = c.list.PushBack(key, new.ring)
 		return nil, false
 	}
 	for {
-		old, loaded := loadOrStore()
+		r, loaded := loadOrStore()
 		if err != nil {
-			c.pool.Put(r)
+			c.pool.Put(new)
 			return nil, nil, err
 		}
 		if !loaded {
-			return value, r, nil
+			return value, new, nil
 		}
-		if v, ok := old.LoadAndHit(); ok {
-			c.pool.Put(r)
-			return v, old, nil
+		if v, ok := r.LoadAndHit(); ok {
+			c.pool.Put(new)
+			return v, r, nil
 		}
 	}
 }
@@ -347,17 +346,10 @@ func (c *Cache) Close() error {
 }
 
 func (c *Cache) delete(key interface{}, r *record) {
-	old, ok := c.records.Load(key)
-	if !ok {
-		panic("evcache: inconsistent map state")
+	if old, ok := c.records.LoadAndDelete(key); ok && old.(*record) == r {
+		return
 	}
-	if old.(*record) != r {
-		panic("evcache: inconsistent map state")
-	}
-	old, ok = c.records.LoadAndDelete(key)
-	if !ok || old.(*record) != r {
-		panic("evcache: inconsistent map state")
-	}
+	panic("evcache: inconsistent map state")
 }
 
 func (c *Cache) finalize(key interface{}, r *record) interface{} {

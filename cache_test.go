@@ -599,7 +599,7 @@ var _ = Describe("ordered iteration of records", func() {
 	})
 })
 
-var _ = Describe("overflow when setting values", func() {
+var _ = Describe("overflowed record eviction", func() {
 	var (
 		n        = 100
 		overflow = 100
@@ -680,6 +680,58 @@ var _ = Describe("overflow when setting values", func() {
 			},
 		),
 	)
+})
+
+var _ = Describe("concurrent workers overflow", func() {
+	var (
+		concurrency = 32
+		n           = 100
+		key         uint64
+		wg          sync.WaitGroup
+		c           *evcache.Cache
+	)
+
+	BeforeEach(func() {
+		key = 0
+		wg = sync.WaitGroup{}
+		c = evcache.New().
+			WithCapacity(10).
+			Build()
+	})
+
+	AfterEach(func() {
+		wg.Wait()
+		c.Close()
+		Expect(c.Len()).To(BeZero())
+	})
+
+	// Depends on Evict being called outside of record lock in c.Fetch.
+	Specify("Fetch doesn't deadlock", func() {
+		for i := 0; i < concurrency; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for i := 0; i < n; i++ {
+					_, _, _ = c.Fetch(atomic.AddUint64(&key, 1), 0, func() (interface{}, error) {
+						return 0, nil
+					})
+				}
+			}()
+		}
+	})
+
+	// Depends on Evict being called outside of record lock in Set.
+	Specify("Set doesn't deadlock", func() {
+		for i := 0; i < concurrency; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for i := 0; i < n; i++ {
+					c.Set(atomic.AddUint64(&key, 1), 0, 0)
+				}
+			}()
+		}
+	})
 })
 
 var _ = Describe("overflow eviction order", func() {
