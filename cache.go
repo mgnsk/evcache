@@ -141,8 +141,13 @@ func (c *Cache) Get(key interface{}) (value interface{}, closer io.Closer, exist
 //
 // Pop is a non-blocking operation.
 func (c *Cache) Pop() (key, value interface{}) {
+	pop := func() interface{} {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return c.list.Pop()
+	}
 	for {
-		if key = c.list.Pop(); key == nil {
+		if key = pop(); key == nil {
 			return nil, nil
 		}
 		if value, ok := c.Evict(key); ok {
@@ -165,6 +170,11 @@ func (c *Cache) Evict(key interface{}) (interface{}, bool) {
 	if !r.Active() {
 		// If record is not ready yet,
 		// don't lock it to prevent deadlock.
+		return nil, false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.Active() {
 		return nil, false
 	}
 	c.delete(key, r)
@@ -210,6 +220,8 @@ func (c *Cache) Flush() {
 //
 // Len does not block.
 func (c *Cache) Len() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.list.Len()
 }
 
@@ -228,17 +240,19 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 			c.Evict(front)
 		}
 	}()
+	if ttl > 0 {
+		c.runLoop()
+	}
 	new := c.pool.Get().(*record)
 	new.mu.Lock()
 	defer new.mu.Unlock()
 	for {
 		old, loaded := c.records.LoadOrStore(key, new)
 		if !loaded {
-			new.init(value, ttl)
+			c.mu.Lock()
+			defer c.mu.Unlock()
 			front = c.list.PushBack(key, new.ring)
-			if ttl > 0 {
-				c.runLoop()
-			}
+			new.init(value, ttl)
 			return
 		}
 		r := old.(*record)
@@ -280,19 +294,17 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 		}
 		value, err = f()
 		if err != nil {
-			// Only a not yet active record is allowed to
-			// lock c.mu while holding r.mu.
-			c.mu.Lock()
-			defer c.mu.Unlock()
 			c.delete(key, new)
 			return nil, false
 		}
 		if ttl > 0 {
 			c.runLoop()
 		}
-		new.init(value, ttl)
-		new.wg.Add(1)
+		c.mu.Lock()
+		defer c.mu.Unlock()
 		front = c.list.PushBack(key, new.ring)
+		new.wg.Add(1)
+		new.init(value, ttl)
 		return nil, false
 	}
 	for {
@@ -316,8 +328,8 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 // When LFU is used, the order is from least to most frequently used,
 // otherwise it is the insertion order with eldest first by default.
 //
-// It is not safe to call Do concurrently with any other method
-// except Exists, Get or Fetch if the value is known to exist.
+// A concurrent Set will block until Do returns. If Fetch is used
+// concurrently and it tries to store a value, it blocks.
 // f is not allowed to modify the cache.
 func (c *Cache) Do(f func(key, value interface{}) bool) {
 	c.mu.Lock()
@@ -353,7 +365,7 @@ func (c *Cache) delete(key interface{}, r *record) {
 }
 
 func (c *Cache) finalize(key interface{}, r *record) interface{} {
-	value := r.LoadAndReset()
+	value := r.loadAndReset()
 	if k := c.list.Remove(r.ring); k != nil && k != key {
 		panic("evcache: invalid ring")
 	}
@@ -396,10 +408,12 @@ func (c *Cache) processRecords(now int64) {
 		if !r.Active() {
 			return true
 		}
-		if r.expired(now) {
-			c.delete(key, r)
+		if r.Expired(now) {
 			// It is safe to lock r.mu while holding c.mu,
 			// the record is already active.
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			c.delete(key, r)
 			c.finalize(key, r)
 			return true
 		}

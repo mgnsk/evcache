@@ -36,6 +36,11 @@ func (r *record) Active() bool {
 	return atomic.LoadUint32(&r.state) == stateActive
 }
 
+func (r *record) Expired(now int64) bool {
+	expires := atomic.LoadInt64(&r.expires)
+	return expires > 0 && expires < now
+}
+
 func (r *record) Load() (interface{}, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -56,19 +61,6 @@ func (r *record) LoadAndHit() (interface{}, bool) {
 	return r.value, true
 }
 
-func (r *record) LoadAndReset() interface{} {
-	if !atomic.CompareAndSwapUint32(&r.state, stateActive, stateInactive) {
-		panic("evcache: invalid record state")
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	value := r.value
-	r.value = nil
-	atomic.StoreInt64(&r.expires, 0)
-	atomic.StoreUint32(&r.hits, 0)
-	return value
-}
-
 func (r *record) init(value interface{}, ttl time.Duration) {
 	if !atomic.CompareAndSwapUint32(&r.state, stateInactive, stateActive) {
 		panic("evcache: invalid record state")
@@ -79,7 +71,13 @@ func (r *record) init(value interface{}, ttl time.Duration) {
 	}
 }
 
-func (r *record) expired(now int64) bool {
-	expires := atomic.LoadInt64(&r.expires)
-	return expires > 0 && expires < now
+func (r *record) loadAndReset() interface{} {
+	if !atomic.CompareAndSwapUint32(&r.state, stateActive, stateInactive) {
+		panic("evcache: invalid record state")
+	}
+	value := r.value
+	r.value = nil
+	atomic.StoreInt64(&r.expires, 0)
+	atomic.StoreUint32(&r.hits, 0)
+	return value
 }

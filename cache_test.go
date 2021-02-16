@@ -682,7 +682,7 @@ var _ = Describe("overflowed record eviction", func() {
 	)
 })
 
-var _ = Describe("concurrent workers overflow", func() {
+var _ = Describe("concurrency test", func() {
 	var (
 		concurrency = 32
 		n           = 100

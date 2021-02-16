@@ -2,12 +2,10 @@ package evcache
 
 import (
 	"container/ring"
-	"sync"
 )
 
 // ringList is a size-limited list using rings.
 type ringList struct {
-	mu       sync.RWMutex
 	back     *ring.Ring
 	size     uint32
 	capacity uint32
@@ -23,15 +21,11 @@ func newRingList(capacity uint32) *ringList {
 
 // Len returns the length of elements in the ring.
 func (l *ringList) Len() int {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
 	return int(l.size)
 }
 
 // Pop removes and returns the front element.
 func (l *ringList) Pop() (value interface{}) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
 	if l.back == nil {
 		return nil
 	}
@@ -41,8 +35,6 @@ func (l *ringList) Pop() (value interface{}) {
 // PushBack inserts a value at the back of list. If capacity is exceeded,
 // an element from the front of list is removed and its value returned.
 func (l *ringList) PushBack(value interface{}, r *ring.Ring) (front interface{}) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
 	r.Value = value
 	l.link(r)
 	if l.capacity > 0 && l.size > l.capacity {
@@ -57,8 +49,6 @@ func (l *ringList) PushBack(value interface{}, r *ring.Ring) (front interface{})
 
 // Remove an element from the list.
 func (l *ringList) Remove(r *ring.Ring) (value interface{}) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
 	if r.Value == nil {
 		return nil
 	}
@@ -67,8 +57,6 @@ func (l *ringList) Remove(r *ring.Ring) (value interface{}) {
 
 // MoveForward moves element forward by at most delta positions.
 func (l *ringList) MoveForward(r *ring.Ring, delta uint32) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
 	if r.Value == nil {
 		panic("evcache: invalid list element")
 	}
@@ -79,8 +67,6 @@ func (l *ringList) MoveForward(r *ring.Ring, delta uint32) {
 // If f returns false, Do stops the iteration.
 // f must not change l.
 func (l *ringList) Do(f func(value interface{}) bool) {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
 	if l.back == nil {
 		return
 	}
