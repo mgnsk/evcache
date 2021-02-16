@@ -398,7 +398,7 @@ func (c *Cache) processRecords(now int64) {
 		}
 		if r.expired(now) {
 			c.delete(key, r)
-			// It is safe to lock r while holding c.mu,
+			// It is safe to lock r.mu while holding c.mu,
 			// the record is already active.
 			c.finalize(key, r)
 			return true
