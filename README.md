@@ -1,11 +1,42 @@
 # evcache [![Go Reference](https://pkg.go.dev/badge/github.com/mgnsk/evcache.svg)](https://pkg.go.dev/github.com/mgnsk/evcache)
 
-This README is a work in progress.
+## Usage
+
+An example of managing network connections:
+
+```go
+import "github.com/mgnsk/evcache"
+
+func main() {
+    c := evcache.New().
+        WithEvictionCallback(func(key, value interface{}) {
+            // The callback will be called at a safe time
+            // after all users have released the key.
+            if err := value.(io.Closer).Close(); err != nil {
+                log.Printf("error evicting key: %v", key)
+            }
+        }).
+        WithCapacity(1000).
+        WithLFU().
+        Build()
+
+    conn, closer, err := c.Fetch("target", time.Minute, func() (interface{}, error) {
+        // Simplified example.
+        conn, err := Dial()
+        return conn, err
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    _ = conn // Use the conn.
+    closer.Close() // Release the key.
+}
+```
 
 ## How it works
 
 The cache is a wrapper for `sync.Map` with autoexpiry, capacity limit and record ordering.
-It acts like a non-blocking ordered map where writes do not block reads. Each value is wrapped
+It is a non-blocking ordered map where writes do not block reads. Each value is wrapped
 in a record type and uses its own RWMutex.
 
 The default order is insertion order. Records are always inserted to the back of cache's list and
