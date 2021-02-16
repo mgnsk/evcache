@@ -136,32 +136,6 @@ func (c *Cache) Get(key interface{}) (value interface{}, closer io.Closer, exist
 	}
 }
 
-// Pop evicts and returns the oldest key and value. If LFU ordering is
-// enabled, then the least frequently used key and value.
-//
-// Pop is a non-blocking operation.
-func (c *Cache) Pop() (key, value interface{}) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if key = c.list.Pop(); key == nil {
-		return nil, nil
-	}
-	value, ok := c.evictLocked(key)
-	if !ok {
-		panic("evcache: invalid map state")
-	}
-	return key, value
-}
-
-// Evict evicts a key and returns its value.
-//
-// Evict is a non-blocking operation.
-func (c *Cache) Evict(key interface{}) (interface{}, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.evictLocked(key)
-}
-
 // Range calls f for each key and value present in the cache in no particular order.
 // If f returns false, Range stops the iteration.
 //
@@ -189,7 +163,7 @@ func (c *Cache) Range(f func(key, value interface{}) bool) {
 
 // Flush evicts all keys from the cache.
 //
-// Flush skips keys whose fetch callback is currently running.
+// Flush is a non-blocking operation.
 func (c *Cache) Flush() {
 	c.records.Range(func(key, _ interface{}) bool {
 		c.Evict(key)
@@ -201,9 +175,33 @@ func (c *Cache) Flush() {
 //
 // Len does not block.
 func (c *Cache) Len() int {
+	return c.list.Len()
+}
+
+// Pop evicts and returns the oldest key and value. If LFU ordering is
+// enabled, then the least frequently used key and value.
+//
+// Pop may block if a concurrent Do is running.
+func (c *Cache) Pop() (key, value interface{}) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.list.Len()
+	if key = c.list.Pop(); key == nil {
+		return nil, nil
+	}
+	value, ok := c.evictLocked(key)
+	if !ok {
+		panic("evcache: invalid map state")
+	}
+	return key, value
+}
+
+// Evict evicts a key and returns its value.
+//
+// Evict may block if a concurrent Do is running.
+func (c *Cache) Evict(key interface{}) (interface{}, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.evictLocked(key)
 }
 
 // Set the value in the cache for a key.
@@ -213,7 +211,8 @@ func (c *Cache) Len() int {
 // depending on whether LFU ordering is enabled or not.
 //
 // Set may block until a concurrent Fetch callback has returned
-// and then immediately overwrite the value.
+// and then immediately overwrite the value. It may also block
+// if a concurrent Do is running.
 func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 	var front interface{}
 	defer func() {
@@ -256,9 +255,10 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 // the least frequently used record or the eldest is evicted
 // depending on whether LFU ordering is enabled or not.
 //
-// Fetch may block until a concurrent Fetch callback has returned and will return
-// that new value or continues with fetching a new key if the concurrent
-// callback returned an error.
+// Fetch may block until a concurrent Fetch callback for key has returned and will return
+// that new value or continues with fetching a new value if the concurrent callback
+// returned an error. It may also block if a concurrent Do is running and the value
+// did not exist causing a store. If the value exists, Fetch will not block.
 func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (value interface{}, closer io.Closer, err error) {
 	var front interface{}
 	defer func() {
@@ -309,7 +309,7 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 // from least to most frequently used. If f returns false,
 // Do stops the iteration.
 //
-// Do blocks Pop, Set, Evict and Fetch (only if it stores a value).
+// Do blocks Pop, Evict, Set and Fetch (only if it stores a value).
 // It does not visit keys whose Fetch callback is currently running.
 // f is not allowed to modify the cache.
 func (c *Cache) Do(f func(key, value interface{}) bool) {

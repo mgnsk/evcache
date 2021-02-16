@@ -2,6 +2,7 @@ package evcache
 
 import (
 	"container/ring"
+	"sync/atomic"
 )
 
 // ringList is a size-limited list using rings.
@@ -21,7 +22,27 @@ func newRingList(capacity uint32) *ringList {
 
 // Len returns the length of elements in the ring.
 func (l *ringList) Len() int {
-	return int(l.size)
+	return int(atomic.LoadUint32(&l.size))
+}
+
+// PushBack inserts a value at the back of list. If capacity is exceeded,
+// an element from the front of list is removed and its value returned.
+func (l *ringList) PushBack(value interface{}, r *ring.Ring) (front interface{}) {
+	r.Value = value
+	if l.back != nil {
+		l.back.Link(r)
+	}
+	l.back = r
+	size := atomic.LoadUint32(&l.size)
+	if l.capacity > 0 && size+1 > l.capacity {
+		front = l.unlink(l.back.Next())
+		if front == value {
+			panic("evcache: front cannot be value")
+		}
+		return front
+	}
+	atomic.AddUint32(&l.size, 1)
+	return nil
 }
 
 // Pop removes and returns the front element.
@@ -29,22 +50,8 @@ func (l *ringList) Pop() (value interface{}) {
 	if l.back == nil {
 		return nil
 	}
+	atomic.AddUint32(&l.size, ^uint32(0))
 	return l.unlink(l.back.Next())
-}
-
-// PushBack inserts a value at the back of list. If capacity is exceeded,
-// an element from the front of list is removed and its value returned.
-func (l *ringList) PushBack(value interface{}, r *ring.Ring) (front interface{}) {
-	r.Value = value
-	l.link(r)
-	if l.capacity > 0 && l.size > l.capacity {
-		front = l.unlink(l.back.Next())
-		if front == value {
-			panic("evcache: front cannot be value")
-		}
-		return front
-	}
-	return nil
 }
 
 // Remove an element from the list.
@@ -53,6 +60,7 @@ func (l *ringList) Remove(r *ring.Ring) (value interface{}) {
 		// An overflowed element unlinked by PushBack.
 		return nil
 	}
+	atomic.AddUint32(&l.size, ^uint32(0))
 	return l.unlink(r)
 }
 
@@ -83,14 +91,6 @@ func (l *ringList) Do(f func(value interface{}) bool) {
 	}
 }
 
-func (l *ringList) link(r *ring.Ring) {
-	if l.back != nil {
-		l.back.Link(r)
-	}
-	l.back = r
-	l.size++
-}
-
 func (l *ringList) unlink(r *ring.Ring) (key interface{}) {
 	if l.back == nil {
 		panic("evcache: invalid cursor")
@@ -104,7 +104,6 @@ func (l *ringList) unlink(r *ring.Ring) (key interface{}) {
 		l.back = r.Prev()
 	}
 	r.Prev().Unlink(1)
-	l.size--
 	key = r.Value
 	r.Value = nil
 	return key
