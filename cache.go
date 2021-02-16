@@ -141,19 +141,16 @@ func (c *Cache) Get(key interface{}) (value interface{}, closer io.Closer, exist
 //
 // Pop is a non-blocking operation.
 func (c *Cache) Pop() (key, value interface{}) {
-	pop := func() interface{} {
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		return c.list.Pop()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if key = c.list.Pop(); key == nil {
+		return nil, nil
 	}
-	for {
-		if key = pop(); key == nil {
-			return nil, nil
-		}
-		if value, ok := c.Evict(key); ok {
-			return key, value
-		}
+	value, ok := c.evictLocked(key)
+	if !ok {
+		panic("evcache: invalid map state")
 	}
+	return key, value
 }
 
 // Evict evicts a key and returns its value.
@@ -162,20 +159,7 @@ func (c *Cache) Pop() (key, value interface{}) {
 func (c *Cache) Evict(key interface{}) (interface{}, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	old, ok := c.records.Load(key)
-	if !ok {
-		return nil, false
-	}
-	r := old.(*record)
-	if !r.Active() {
-		// If record is not ready yet,
-		// don't lock it to prevent deadlock.
-		return nil, false
-	}
-	c.delete(key, r)
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return c.finalize(key, r), true
+	return c.evictLocked(key)
 }
 
 // Range calls f for each key and value present in the cache in no particular order.
@@ -357,6 +341,23 @@ func (c *Cache) Close() error {
 	c.Flush()
 	c.wg.Wait()
 	return nil
+}
+
+func (c *Cache) evictLocked(key interface{}) (interface{}, bool) {
+	old, ok := c.records.Load(key)
+	if !ok {
+		return nil, false
+	}
+	r := old.(*record)
+	if !r.Active() {
+		// If record is not ready yet,
+		// don't lock it to prevent deadlock.
+		return nil, false
+	}
+	c.delete(key, r)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return c.finalize(key, r), true
 }
 
 func (c *Cache) delete(key interface{}, r *record) {
