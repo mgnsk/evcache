@@ -85,6 +85,9 @@ func BenchmarkSetNotExists(b *testing.B) {
 
 func BenchmarkSetExists(b *testing.B) {
 	c := evcache.New().Build()
+	for i := 0; i < b.N; i++ {
+		c.Set(0, nil, 0)
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
