@@ -13,7 +13,7 @@ func main() {
             // The callback will be called at a safe time
             // after all users have released the key.
             if err := value.(io.Closer).Close(); err != nil {
-                log.Printf("error evicting key: %v", key)
+                log.Fatal(err)
             }
         }).
         WithCapacity(1000).
