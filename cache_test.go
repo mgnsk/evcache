@@ -132,7 +132,7 @@ var _ = Describe("Fetch callback", func() {
 	})
 
 	AfterEach(func() {
-		wg.Wait()
+		wait(&wg)
 		c.Close()
 		Expect(c.Len()).To(BeZero())
 	})
@@ -300,6 +300,24 @@ var _ = Describe("Fetch callback", func() {
 
 			valueCh <- "value"
 		})
+
+		Specify("Do skips the blocking key", func() {
+			c.Set("key1", "value1", 0)
+			Expect(c.Len()).To(Equal(1))
+
+			n := 0
+			// Do must not modify the cache.
+			c.Do(func(key, value interface{}) bool {
+				if key == "key" {
+					Fail("expected to skip key")
+				}
+				n++
+				return true
+			})
+			Expect(n).To(Equal(1))
+
+			valueCh <- "value"
+		})
 	})
 })
 
@@ -432,7 +450,7 @@ var _ = Describe("eviction callback", func() {
 			// Eviction callback waited until Fetch returned a new value.
 			Expect(<-evicted).To(Equal(uint64(0)))
 
-			wg.Wait()
+			wait(&wg)
 		})
 	})
 })
@@ -452,7 +470,7 @@ var _ = Describe("Fetch fails with an error", func() {
 	})
 
 	AfterEach(func() {
-		wg.Wait()
+		wait(&wg)
 		c.Close()
 		Expect(c.Len()).To(BeZero())
 	})
@@ -660,7 +678,7 @@ var _ = Describe("overflowed record eviction", func() {
 				}()
 			}
 
-			wg.Wait()
+			wait(&wg)
 		},
 		Entry(
 			"Fetch",
@@ -700,7 +718,7 @@ var _ = Describe("concurrency test", func() {
 	})
 
 	AfterEach(func() {
-		wg.Wait()
+		wait(&wg)
 		c.Close()
 		Expect(c.Len()).To(BeZero())
 	})

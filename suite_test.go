@@ -3,6 +3,7 @@ package evcache_test
 import (
 	"errors"
 	"math/rand"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,6 +15,19 @@ import (
 
 func init() {
 	rand.Seed(time.Now().UnixNano())
+}
+
+func wait(wg *sync.WaitGroup) {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		Fail("test timed out")
+	}
 }
 
 func TestCache(t *testing.T) {

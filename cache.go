@@ -172,12 +172,9 @@ func (c *Cache) Evict(key interface{}) (interface{}, bool) {
 		// don't lock it to prevent deadlock.
 		return nil, false
 	}
+	c.delete(key, r)
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !r.Active() {
-		return nil, false
-	}
-	c.delete(key, r)
 	return c.finalize(key, r), true
 }
 
@@ -324,22 +321,27 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 }
 
 // Do calls f sequentially for each key and value present in the cache
-// in order. If f returns false, Do stops the iteration.
-// When LFU is used, the order is from least to most frequently used,
-// otherwise it is the insertion order with eldest first by default.
+// in insertion order by default. When LFU is used, the order is
+// from least to most frequently used. If f returns false,
+// Do stops the iteration.
 //
-// A concurrent Set will block until Do returns. If Fetch is used
-// concurrently and it tries to store a value, it blocks.
+// Do blocks Pop, Set, Evict and Fetch (only if it stores a value).
+// It does not visit keys whose Fetch callback is currently running.
 // f is not allowed to modify the cache.
 func (c *Cache) Do(f func(key, value interface{}) bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.list.Do(func(key interface{}) bool {
-		r, ok := c.records.Load(key)
+		old, ok := c.records.Load(key)
 		if !ok {
-			panic("evcache: Do used concurrently")
+			panic("evcache: invalid map state")
 		}
-		return f(key, r.(*record).value)
+		r := old.(*record)
+		value, ok := r.Load()
+		if !ok {
+			panic("evcache: invalid record state")
+		}
+		return f(key, value)
 	})
 }
 
@@ -361,7 +363,7 @@ func (c *Cache) delete(key interface{}, r *record) {
 	if old, ok := c.records.LoadAndDelete(key); ok && old.(*record) == r {
 		return
 	}
-	panic("evcache: inconsistent map state")
+	panic("evcache: invalid map state")
 }
 
 func (c *Cache) finalize(key interface{}, r *record) interface{} {
@@ -411,9 +413,9 @@ func (c *Cache) processRecords(now int64) {
 		if r.Expired(now) {
 			// It is safe to lock r.mu while holding c.mu,
 			// the record is already active.
+			c.delete(key, r)
 			r.mu.Lock()
 			defer r.mu.Unlock()
-			c.delete(key, r)
 			c.finalize(key, r)
 			return true
 		}

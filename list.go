@@ -50,6 +50,7 @@ func (l *ringList) PushBack(value interface{}, r *ring.Ring) (front interface{})
 // Remove an element from the list.
 func (l *ringList) Remove(r *ring.Ring) (value interface{}) {
 	if r.Value == nil {
+		// An overflowed element unlinked by PushBack.
 		return nil
 	}
 	return l.unlink(r)
@@ -58,7 +59,8 @@ func (l *ringList) Remove(r *ring.Ring) (value interface{}) {
 // MoveForward moves element forward by at most delta positions.
 func (l *ringList) MoveForward(r *ring.Ring, delta uint32) {
 	if r.Value == nil {
-		panic("evcache: invalid list element")
+		// An overflowed element unlinked by PushBack.
+		return
 	}
 	l.move(r, delta)
 }
