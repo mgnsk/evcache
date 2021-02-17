@@ -5,7 +5,7 @@
 An example of managing network connections:
 
 ```go
-import "github.com/mgnsk/evcache"
+import "github.com/mgnsk/evcache/v2"
 
 func main() {
     c := evcache.New().

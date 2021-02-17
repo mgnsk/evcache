@@ -1,4 +1,4 @@
-module github.com/mgnsk/evcache
+module github.com/mgnsk/evcache/v2
 
 go 1.15
 

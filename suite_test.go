@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mgnsk/evcache"
+	"github.com/mgnsk/evcache/v2"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
