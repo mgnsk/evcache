@@ -321,7 +321,7 @@ var _ = Describe("Fetch callback", func() {
 	})
 })
 
-var _ = Describe("deleting values", func() {
+var _ = Describe("evicting values", func() {
 	var c *evcache.Cache
 
 	BeforeEach(func() {
@@ -334,15 +334,56 @@ var _ = Describe("deleting values", func() {
 	})
 
 	When("value exists", func() {
-		Specify("it is evicted", func() {
+		BeforeEach(func() {
 			c.Set("key", "value", 0)
 			Expect(c.Len()).To(Equal(1))
+		})
 
+		Specify("it is evicted", func() {
 			v, ok := c.Evict("key")
 			Expect(ok).To(BeTrue())
 			Expect(v).To(Equal("value"))
 			Expect(c.Exists("key")).To(BeFalse())
 			Expect(c.Len()).To(BeZero())
+		})
+	})
+})
+
+var _ = Describe("compare and evict", func() {
+	var c *evcache.Cache
+
+	BeforeEach(func() {
+		c = evcache.New().Build()
+		c.Set("key", "value", 0)
+		Expect(c.Len()).To(Equal(1))
+	})
+
+	AfterEach(func() {
+		c.Close()
+		Expect(c.Len()).To(BeZero())
+	})
+
+	When("value is deeply equal", func() {
+		Specify("it is evicted", func() {
+			ok := c.CompareAndEvict("key", "value")
+			Expect(ok).To(BeTrue())
+			Expect(c.Exists("key")).To(BeFalse())
+			Expect(c.Len()).To(BeZero())
+		})
+	})
+
+	When("value is not deeply equal", func() {
+		Specify("it is not evicted", func() {
+			// If we load a value, use it and then encounter an error
+			// we might want to evict the value.
+			//
+			// It we would call c.Evict("key") we might mistakenly evict
+			// a new value if key had concurrently changed after loading
+			// the value. Only evict the old value if not yet evicted.
+			ok := c.CompareAndEvict("key", "old value")
+			Expect(ok).To(BeFalse())
+			Expect(c.Exists("key")).To(BeTrue())
+			Expect(c.Len()).To(Equal(1))
 		})
 	})
 })
