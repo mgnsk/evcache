@@ -2,6 +2,7 @@ package evcache
 
 import (
 	"io"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -188,7 +189,7 @@ func (c *Cache) Pop() (key, value interface{}) {
 	if key = c.list.Pop(); key == nil {
 		return nil, nil
 	}
-	value, ok := c.evictLocked(key)
+	value, ok := c.evict(key)
 	if !ok {
 		panic("evcache: invalid map state")
 	}
@@ -201,7 +202,16 @@ func (c *Cache) Pop() (key, value interface{}) {
 func (c *Cache) Evict(key interface{}) (interface{}, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.evictLocked(key)
+	return c.evict(key)
+}
+
+// CompareAndEvict evicts the key only if its value is deeply equal to old.
+//
+// CompareAndEvict may block if a concurrent Do is running.
+func (c *Cache) CompareAndEvict(key, old interface{}) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.compareAndEvict(key, old)
 }
 
 // Set the value in the cache for a key.
@@ -343,15 +353,36 @@ func (c *Cache) Close() error {
 	return nil
 }
 
-func (c *Cache) evictLocked(key interface{}) (interface{}, bool) {
+func (c *Cache) compareAndEvict(key, value interface{}) bool {
+	old, ok := c.records.Load(key)
+	if !ok {
+		return false
+	}
+	r := old.(*record)
+	if !r.Active() {
+		return false
+	}
+	v, ok := r.Load()
+	if !ok {
+		panic("evcache: invalid record state")
+	}
+	if !reflect.DeepEqual(v, value) {
+		return false
+	}
+	c.delete(key, r)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	c.finalize(key, r)
+	return true
+}
+
+func (c *Cache) evict(key interface{}) (interface{}, bool) {
 	old, ok := c.records.Load(key)
 	if !ok {
 		return nil, false
 	}
 	r := old.(*record)
 	if !r.Active() {
-		// If record is not ready yet,
-		// don't lock it to prevent deadlock.
 		return nil, false
 	}
 	c.delete(key, r)
