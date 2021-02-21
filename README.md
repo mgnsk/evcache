@@ -28,8 +28,11 @@ func main() {
     if err != nil {
         log.Fatal(err)
     }
-    _ = conn // Use the conn.
-    closer.Close() // Release the key.
+    defer closer.Close() // Release the key.
+    if err := conn.RPC(); err != nil {
+        // Close once and only this conn.
+        c.CompareAndEvict("target", conn)
+    }
 }
 ```
 
