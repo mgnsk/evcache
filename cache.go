@@ -19,24 +19,21 @@ var SyncInterval = time.Second
 // FetchCallback is called when *Cache.Fetch has a miss
 // and must return a new value or an error.
 //
-// It blocks the key from being accessed until the
-// callback returns.
+// It blocks the key from being Set or Fetched concurrently.
 type FetchCallback func() (interface{}, error)
 
-// EvictionCallback is an asynchronous callback which
-// is called after cache key eviction.
+// EvictionCallback is guaranteed to call when a cache record is evicted.
 //
-// It waits until all io.Closers returned by Get or Fetch
-// are closed.
+// It waits until all io.Closers returned by Get or Fetch are closed.
 type EvictionCallback func(key, value interface{})
 
 // Cache is an in-memory ordered cache with optional eventually consistent LFU ordering.
 type Cache struct {
 	records    sync.Map
 	pool       sync.Pool
-	wg         sync.WaitGroup
 	mu         sync.Mutex
 	onceLoop   sync.Once
+	wg         sync.WaitGroup
 	lfuEnabled bool
 	list       *ringList
 	afterEvict EvictionCallback
@@ -49,7 +46,7 @@ type Builder func(*Cache)
 // New creates an empty cache.
 //
 // Cache must be closed after usage has stopped
-// to prevent a leaking resources.
+// to prevent leaking resources.
 //
 // It is not safe to close the cache while in use.
 func New() Builder {
@@ -57,6 +54,11 @@ func New() Builder {
 }
 
 // WithEvictionCallback specifies an asynchronous eviction callback.
+//
+// After record is evicted from cache, the callback is guaranteed to run.
+//
+// The callback does not block the cache from having a new value set
+// for key before the callback runs for an old value.
 func (build Builder) WithEvictionCallback(cb EvictionCallback) Builder {
 	return func(c *Cache) {
 		build(c)
@@ -207,11 +209,32 @@ func (c *Cache) Evict(key interface{}) (interface{}, bool) {
 
 // CompareAndEvict evicts the key only if its value is deeply equal to old.
 //
+// This method is only safe if value is unique. If this is not the case,
+// such as when values are pooled then the user must make sure that this
+// method returns before putting the value back into pool in the presence
+// of concurrent writers for key where the new value originates from the pool.
+//
 // CompareAndEvict may block if a concurrent Do is running.
-func (c *Cache) CompareAndEvict(key, old interface{}) bool {
+func (c *Cache) CompareAndEvict(key, value interface{}) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.compareAndEvict(key, old)
+	rec, ok := c.records.Load(key)
+	if !ok {
+		return false
+	}
+	r := rec.(*record)
+	if !r.Active() {
+		return false
+	}
+	v, ok := r.Load()
+	if !ok {
+		panic("evcache: invalid record state")
+	}
+	if !reflect.DeepEqual(v, value) {
+		return false
+	}
+	c.finalize(key, r)
+	return true
 }
 
 // Set the value in the cache for a key.
@@ -353,29 +376,6 @@ func (c *Cache) Close() error {
 	return nil
 }
 
-func (c *Cache) compareAndEvict(key, value interface{}) bool {
-	old, ok := c.records.Load(key)
-	if !ok {
-		return false
-	}
-	r := old.(*record)
-	if !r.Active() {
-		return false
-	}
-	v, ok := r.Load()
-	if !ok {
-		panic("evcache: invalid record state")
-	}
-	if !reflect.DeepEqual(v, value) {
-		return false
-	}
-	c.delete(key, r)
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	c.finalize(key, r)
-	return true
-}
-
 func (c *Cache) evict(key interface{}) (interface{}, bool) {
 	old, ok := c.records.Load(key)
 	if !ok {
@@ -385,9 +385,6 @@ func (c *Cache) evict(key interface{}) (interface{}, bool) {
 	if !r.Active() {
 		return nil, false
 	}
-	c.delete(key, r)
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	return c.finalize(key, r), true
 }
 
@@ -398,7 +395,12 @@ func (c *Cache) delete(key interface{}, r *record) {
 	panic("evcache: invalid map state")
 }
 
+// It is safe to lock r.mu while holding c.mu,
+// the record is already active.
 func (c *Cache) finalize(key interface{}, r *record) interface{} {
+	c.delete(key, r)
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	value := r.loadAndReset()
 	if k := c.list.Remove(r.ring); k != nil && k != key {
 		panic("evcache: invalid ring")
@@ -443,11 +445,6 @@ func (c *Cache) processRecords(now int64) {
 			return true
 		}
 		if r.Expired(now) {
-			c.delete(key, r)
-			// It is safe to lock r.mu while holding c.mu,
-			// the record is already active.
-			r.mu.Lock()
-			defer r.mu.Unlock()
 			c.finalize(key, r)
 			return true
 		}
