@@ -1,4 +1,8 @@
-# evcache [![Go Reference](https://pkg.go.dev/badge/github.com/mgnsk/evcache/v2.svg)](https://pkg.go.dev/github.com/mgnsk/evcache/v2) [![Go Report Card](https://goreportcard.com/badge/github.com/mgnsk/evcache)](https://goreportcard.com/report/github.com/mgnsk/evcache)
+# evcache
+[![Go Reference](https://pkg.go.dev/badge/github.com/mgnsk/evcache/v2.svg)](https://pkg.go.dev/github.com/mgnsk/evcache/v2)
+[![Go Report Card](https://goreportcard.com/badge/github.com/mgnsk/evcache)](https://goreportcard.com/report/github.com/mgnsk/evcache)
+[![Maintainability](https://api.codeclimate.com/v1/badges/2d6db0eb1dc3cbe2848c/maintainability)](https://codeclimate.com/github/mgnsk/evcache/maintainability)
+[![Test Coverage](https://api.codeclimate.com/v1/badges/2d6db0eb1dc3cbe2848c/test_coverage)](https://codeclimate.com/github/mgnsk/evcache/test_coverage)
 
 ## Usage
 
