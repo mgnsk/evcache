@@ -1,4 +1,4 @@
-# evcache [![Go Reference](https://pkg.go.dev/badge/github.com/mgnsk/evcache/v2.svg)](https://pkg.go.dev/github.com/mgnsk/evcache/v2)
+# evcache [![Go Reference](https://pkg.go.dev/badge/github.com/mgnsk/evcache/v2.svg)](https://pkg.go.dev/github.com/mgnsk/evcache/v2) [![Go Report Card](https://goreportcard.com/badge/github.com/mgnsk/evcache)](https://goreportcard.com/report/github.com/mgnsk/evcache)
 
 ## Usage
 
