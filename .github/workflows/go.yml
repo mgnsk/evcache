@@ -19,14 +19,9 @@ jobs:
       with:
         go-version: 1.16
 
-    - name: Test & publish code coverage
-      uses: paambaati/codeclimate-action@v2.7.5
+    - name: Run coverage
+      run: go test -race -coverprofile=coverage.txt -covermode=atomic
+    - name: Upload coverage to Codecov
       env:
-        CC_TEST_REPORTER_ID: ${{ secrets.CC_TEST_REPORTER_ID }}
-      with:
-        coverageCommand: go test -coverprofile=c.out
-        workingDirectory: ${{github.workspace}}
-        debug: true
-
-    - name: Race test
-      run: go test -race -v ./...
+        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      run: bash <(curl -s https://codecov.io/bash)
