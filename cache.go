@@ -209,7 +209,7 @@ func (c *Cache) Evict(key interface{}) (interface{}, bool) {
 
 // CompareAndEvict evicts the key only if its value is deeply equal to old.
 //
-// This method is only safe if value is unique. If this is not the case,
+// This method is safe only if value is unique. If this is not the case,
 // such as when values are pooled then the user must make sure that this
 // method returns before putting the value back into pool in the presence
 // of concurrent writers for key where the new value originates from the pool.
