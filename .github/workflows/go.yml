@@ -1,10 +1,11 @@
-name: Go
+---
+name: Go test and coverage
 
 on:
   push:
-    branches: [ master ]
+    branches: [master]
   pull_request:
-    branches: [ master ]
+    branches: [master]
 
 jobs:
 
@@ -23,3 +24,13 @@ jobs:
 
     - name: Race test
       run: go test -race -v ./...
+
+  coverage:
+    steps:
+    - name: Test & publish code coverage
+      uses: paambaati/codeclimate-action@v2.7.5
+      env:
+        CC_TEST_REPORTER_ID: 4afb26e409fe6d3c6caa1d17b6e1f1e267c036c252fb022b981b082d56c8eb5e
+      with:
+        coverageCommand: go test -coverprofile=c.out
+        debug: true
