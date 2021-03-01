@@ -1,6 +1,6 @@
 module github.com/mgnsk/evcache
 
-go 1.15
+go 1.16
 
 require (
 	github.com/nxadm/tail v1.4.8 // indirect
@@ -11,3 +11,6 @@ require (
 	golang.org/x/text v0.3.5 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
+
+retract [v1.0.0, v1.6.0] // race conditions
+retract v1.6.1 // contains retractions only
