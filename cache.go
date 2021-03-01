@@ -256,6 +256,14 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 	if ttl > 0 {
 		c.runLoop()
 	}
+	doEvict := func(r *record) {
+		defer c.Evict(key)
+		if !r.Active() {
+			// Wait for any pending Fetch callback.
+			r.mu.Lock()
+			defer r.mu.Unlock()
+		}
+	}
 	new := c.pool.Get().(*record)
 	new.mu.Lock()
 	defer new.mu.Unlock()
@@ -268,13 +276,7 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 			new.init(value, ttl)
 			return
 		}
-		r := old.(*record)
-		if !r.Active() {
-			// Wait for any pending Fetch callback.
-			r.mu.Lock()
-			r.mu.Unlock()
-		}
-		c.Evict(key)
+		doEvict(old.(*record))
 	}
 }
 
