@@ -22,7 +22,7 @@ var SyncInterval = time.Second
 // It blocks the key from being Set or Fetched concurrently.
 type FetchCallback func() (interface{}, error)
 
-// EvictionCallback is guaranteed to call when a cache record is evicted.
+// EvictionCallback is guaranteed to run in a new goroutine when a cache record is evicted.
 //
 // It waits until all io.Closers returned by Get or Fetch are closed.
 type EvictionCallback func(key, value interface{})
@@ -211,7 +211,7 @@ func (c *Cache) Evict(key interface{}) (interface{}, bool) {
 //
 // This method is safe only if value is unique. If this is not the case,
 // such as when values are pooled then the user must make sure that this
-// method returns before putting the value back into pool in the presence
+// method returns before putting the value back into the pool in the presence
 // of concurrent writers for key where the new value originates from the pool.
 //
 // CompareAndEvict may block if a concurrent Do is running.
