@@ -164,16 +164,6 @@ func (c *Cache) Range(f func(key, value interface{}) bool) {
 	})
 }
 
-// Flush evicts all keys from the cache.
-//
-// Flush is a non-blocking operation.
-func (c *Cache) Flush() {
-	c.records.Range(func(key, _ interface{}) bool {
-		c.Evict(key)
-		return true
-	})
-}
-
 // Len returns the number of keys in the cache.
 //
 // Len does not block.
@@ -196,6 +186,16 @@ func (c *Cache) Pop() (key, value interface{}) {
 		panic("evcache: invalid map state")
 	}
 	return key, value
+}
+
+// Flush evicts all keys from the cache.
+//
+// Flush may block if a concurrent Do is running.
+func (c *Cache) Flush() {
+	c.records.Range(func(key, _ interface{}) bool {
+		c.Evict(key)
+		return true
+	})
 }
 
 // Evict evicts a key and returns its value.
@@ -310,7 +310,7 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 		}
 		value, err = f()
 		if err != nil {
-			c.delete(key, new)
+			c.records.Delete(key)
 			return nil, false
 		}
 		if ttl > 0 {
@@ -390,17 +390,10 @@ func (c *Cache) evict(key interface{}) (interface{}, bool) {
 	return c.finalize(key, r), true
 }
 
-func (c *Cache) delete(key interface{}, r *record) {
-	if old, ok := c.records.LoadAndDelete(key); ok && old.(*record) == r {
-		return
-	}
-	panic("evcache: invalid map state")
-}
-
 // It is safe to lock r.mu while holding c.mu,
 // the record is already active.
 func (c *Cache) finalize(key interface{}, r *record) interface{} {
-	c.delete(key, r)
+	c.records.Delete(key)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	value := r.loadAndReset()
