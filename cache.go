@@ -27,8 +27,8 @@ type FetchCallback func() (interface{}, error)
 // It waits until all io.Closers returned by Get or Fetch are closed before running.
 type EvictionCallback func(key, value interface{})
 
-// Mode specifies the mode in which keys block during eviction.
-type Mode int
+// EvictionMode specifies the mode in which keys block during eviction.
+type EvictionMode int
 
 const (
 	// ModeNonBlocking configures EvictionCallback to
@@ -38,7 +38,7 @@ const (
 	// before EvictionCallback starts for an old value.
 	//
 	// This is the default mode.
-	ModeNonBlocking Mode = iota
+	ModeNonBlocking EvictionMode = iota
 
 	// ModeBlocking configures EvictionCallback to
 	// block Fetch and Set for the key being evicted.
@@ -58,7 +58,7 @@ type Cache struct {
 	lfuEnabled bool
 	list       *ringList
 	afterEvict EvictionCallback
-	mode       Mode
+	mode       EvictionMode
 	stopLoop   chan struct{}
 }
 
@@ -86,10 +86,10 @@ func (build Builder) WithEvictionCallback(cb EvictionCallback) Builder {
 	}
 }
 
-// WithMode specifies an eviction blocking mode.
+// WithEvictionMode specifies an eviction blocking mode.
 //
 // The default mode is ModeNonBlocking.
-func (build Builder) WithMode(mode Mode) Builder {
+func (build Builder) WithEvictionMode(mode EvictionMode) Builder {
 	return func(c *Cache) {
 		build(c)
 		if mode != ModeBlocking && mode != ModeNonBlocking {
@@ -129,6 +129,9 @@ func (build Builder) Build() *Cache {
 		stopLoop: make(chan struct{}),
 	}
 	build(c)
+	if c.mode == ModeBlocking && c.afterEvict == nil {
+		panic("evcache: WithEvictionMode requires WithEvictionCallback")
+	}
 	if c.list == nil {
 		c.list = newRingList(0)
 	}
@@ -243,6 +246,9 @@ func (c *Cache) Evict(key interface{}) (value interface{}, ok bool) {
 }
 
 // CompareAndEvict evicts the key only if its value is deeply equal to old.
+//
+// It is useful in ModeNonBlocking where holding an active record
+// does not prevent the value for key from concurrently changing.
 //
 // This method is safe only if value is unique. If this is not the case,
 // such as when values are pooled then the user must make sure that this
@@ -430,11 +436,18 @@ func (c *Cache) load(key interface{}) *record {
 // It is safe to lock r.mu while holding c.mu,
 // the record is already active.
 func (c *Cache) finalize(key interface{}, r *record) (value interface{}) {
-	if c.mode == ModeNonBlocking {
-		c.records.Delete(key)
-		defer r.mu.Unlock()
+	switch c.mode {
+	case ModeNonBlocking:
+		return c.finalizeNonBlocking(key, r)
+	default:
+		return c.finalizeBlocking(key, r)
 	}
+}
+
+func (c *Cache) finalizeNonBlocking(key interface{}, r *record) (value interface{}) {
+	c.records.Delete(key)
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	value = r.loadAndReset()
 	if k := c.list.Remove(r.ring); k != nil && k != key {
 		panic("evcache: invalid ring")
@@ -447,13 +460,32 @@ func (c *Cache) finalize(key interface{}, r *record) (value interface{}) {
 	go func() {
 		defer c.wg.Done()
 		r.wg.Wait()
-		if c.mode == ModeBlocking {
-			defer c.pool.Put(r)
-			defer r.mu.Unlock()
-			defer c.records.Delete(key)
-		} else {
-			c.pool.Put(r)
-		}
+		c.pool.Put(r)
+		c.afterEvict(key, value)
+	}()
+	return value
+}
+
+func (c *Cache) finalizeBlocking(key interface{}, r *record) (value interface{}) {
+	r.mu.Lock()
+	if c.afterEvict == nil {
+		defer r.mu.Unlock()
+	}
+	value = r.loadAndReset()
+	if k := c.list.Remove(r.ring); k != nil && k != key {
+		panic("evcache: invalid ring")
+	}
+	if c.afterEvict == nil {
+		c.pool.Put(r)
+		return value
+	}
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		r.wg.Wait()
+		defer c.pool.Put(r)
+		defer r.mu.Unlock()
+		defer c.records.Delete(key)
 		c.afterEvict(key, value)
 	}()
 	return value

@@ -353,6 +353,24 @@ var _ = Describe("evicting values", func() {
 			Expect(c.Len()).To(BeZero())
 		})
 	})
+
+	When("record is active", func() {
+		BeforeEach(func() {
+			c.Set("key", "value", 0)
+			Expect(c.Len()).To(Equal(1))
+		})
+
+		Specify("it is evicted", func() {
+			_, closer, _ := c.Get("key")
+			defer closer.Close()
+
+			v, ok := c.Evict("key")
+			Expect(ok).To(BeTrue())
+			Expect(v).To(Equal("value"))
+			Expect(c.Exists("key")).To(BeFalse())
+			Expect(c.Len()).To(BeZero())
+		})
+	})
 })
 
 var _ = Describe("compare and evict", func() {
@@ -515,7 +533,7 @@ var _ = Describe("eviction callback with ModeNonBlocking", func() {
 				defer GinkgoRecover()
 				evicted <- value.(string)
 			}).
-			WithMode(evcache.ModeNonBlocking).
+			WithEvictionMode(evcache.ModeNonBlocking).
 			Build()
 	})
 
@@ -559,7 +577,7 @@ var _ = Describe("eviction callback with ModeBlocking", func() {
 				defer GinkgoRecover()
 				evicted <- value.(string)
 			}).
-			WithMode(evcache.ModeBlocking).
+			WithEvictionMode(evcache.ModeBlocking).
 			Build()
 	})
 
