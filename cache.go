@@ -437,8 +437,6 @@ func (c *Cache) load(key interface{}) *record {
 	}
 	r := old.(*record)
 	if !r.Active() {
-		// fmt.Println(r.state)
-		// fmt.Println("not active")
 		return nil
 	}
 	return r
