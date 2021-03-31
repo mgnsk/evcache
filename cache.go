@@ -299,7 +299,7 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 		c.runLoopOnce()
 	}
 	doEvict := func(r *record) {
-		if r.IsEvicting() {
+		if c.mode == ModeNonBlocking && r.IsEvicting() {
 			r.evictionWg.Wait()
 			return
 		}
@@ -385,7 +385,7 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 			c.pool.Put(new)
 			return v, r, nil
 		}
-		if r.IsEvicting() {
+		if c.mode == ModeNonBlocking && r.IsEvicting() {
 			r.evictionWg.Wait()
 		}
 	}
@@ -461,16 +461,18 @@ func (c *Cache) finalize(key interface{}, r *record) (value interface{}) {
 		return value
 	}
 	c.wg.Add(1)
-	r.evictionWg.Add(1)
+	if c.mode == ModeBlocking {
+		r.evictionWg.Add(1)
+	}
 	go func() {
 		defer c.wg.Done()
-		defer r.evictionWg.Done()
 		r.readerWg.Wait()
 		if c.mode == ModeNonBlocking {
 			r.setState(stateInactive)
 			c.pool.Put(r)
 		} else {
 			defer c.pool.Put(r)
+			defer r.evictionWg.Done()
 			defer r.setState(stateInactive)
 			defer c.records.Delete(key)
 		}
