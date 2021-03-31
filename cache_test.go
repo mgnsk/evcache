@@ -2,7 +2,6 @@ package evcache_test
 
 import (
 	"errors"
-	"math/rand"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -15,7 +14,6 @@ import (
 )
 
 var _ = BeforeSuite(func() {
-	rand.Seed(time.Now().UnixNano())
 	// Reduce the interval to make tests run faster
 	// and use default gomega.Eventually with
 	// default timeout of 1s.
@@ -155,7 +153,7 @@ var _ = Describe("Fetch callback", func() {
 					close(fetchStarted)
 					v := <-valueCh
 					if !atomic.CompareAndSwapUint64(&done, 0, 1) {
-						Fail("expected to return first")
+						Fail("expected for fetch callback to return first")
 					}
 					if err, ok := v.(error); ok {
 						return nil, err
@@ -170,26 +168,26 @@ var _ = Describe("Fetch callback", func() {
 		})
 
 		Specify("Exists will not block and returns false", func() {
+			defer close(valueCh)
 			Expect(c.Exists("key")).To(BeFalse())
-			close(valueCh)
 		})
 
 		Specify("Evict will not block and returns false", func() {
+			defer close(valueCh)
 			_, ok := c.Evict("key")
 			Expect(ok).To(BeFalse())
-			close(valueCh)
 		})
 
 		Specify("Get will not block and returns false", func() {
+			defer close(valueCh)
 			_, _, ok := c.Get("key")
 			Expect(ok).To(BeFalse())
-			close(valueCh)
 		})
 
-		Specify("Pop will not block and returns false", func() {
+		Specify("Pop will not block and returns nil", func() {
+			defer close(valueCh)
 			key, _ := c.Pop()
 			Expect(key).To(BeNil())
-			close(valueCh)
 		})
 
 		Context("Fetch callback does not return an error", func() {
@@ -257,13 +255,17 @@ var _ = Describe("Fetch callback", func() {
 		Specify("autoexpiry keeps working", func() {
 			// Verify other keys can expire.
 			c.Set("key1", "value1", 4*evcache.SyncInterval)
-			Expect(c.Len()).To(Equal(1))
 
-			Expect(<-evicted).To(Equal("key1"))
-			Expect(c.Len()).To(BeZero())
+			len1 := c.Len()
+			k := <-evicted
+			len2 := c.Len()
 
 			// Finally send a value and unblock the first key.
 			valueCh <- "value"
+
+			Expect(len1).To(Equal(1))
+			Expect(k).To(Equal("key1"))
+			Expect(len2).To(BeZero())
 
 			Eventually(func() bool {
 				v, closer, exists := c.Get("key")
@@ -282,6 +284,10 @@ var _ = Describe("Fetch callback", func() {
 		})
 
 		Specify("Range skips the blocking key", func() {
+			defer func() {
+				valueCh <- "value"
+			}()
+
 			c.Set("key1", "value1", 0)
 			Expect(c.Len()).To(Equal(1))
 
@@ -297,11 +303,13 @@ var _ = Describe("Fetch callback", func() {
 				return true
 			})
 			Expect(n).To(Equal(1))
-
-			valueCh <- "value"
 		})
 
 		Specify("Do skips the blocking key", func() {
+			defer func() {
+				valueCh <- "value"
+			}()
+
 			c.Set("key1", "value1", 0)
 			Expect(c.Len()).To(Equal(1))
 
@@ -315,8 +323,6 @@ var _ = Describe("Fetch callback", func() {
 				return true
 			})
 			Expect(n).To(Equal(1))
-
-			valueCh <- "value"
 		})
 	})
 })
@@ -493,6 +499,180 @@ var _ = Describe("eviction callback", func() {
 
 			wait(&wg)
 		})
+	})
+})
+
+var _ = Describe("eviction callback with ModeNonBlocking", func() {
+	var (
+		evicted chan string
+		c       *evcache.Cache
+	)
+
+	BeforeEach(func() {
+		evicted = make(chan string)
+		c = evcache.New().
+			WithEvictionCallback(func(_, value interface{}) {
+				defer GinkgoRecover()
+				evicted <- value.(string)
+			}).
+			WithMode(evcache.ModeNonBlocking).
+			Build()
+	})
+
+	AfterEach(func() {
+		c.Close()
+		Expect(c.Len()).To(BeZero())
+	})
+
+	Specify("callback does not block key", func() {
+		c.Set("key", "value1", 0)
+		value1, _ := c.Evict("key")
+
+		c.Set("key", "value2", 0)
+		value2, _ := c.Evict("key")
+
+		<-evicted
+		<-evicted
+
+		Expect(value1).To(Equal("value1"))
+		Expect(value2).To(Equal("value2"))
+	})
+})
+
+var _ = Describe("eviction callback with ModeBlocking", func() {
+	var (
+		evicted         chan string
+		callbackStarted chan struct{}
+		once            sync.Once
+		c               *evcache.Cache
+	)
+
+	BeforeEach(func() {
+		evicted = make(chan string)
+		callbackStarted = make(chan struct{})
+		once = sync.Once{}
+		c = evcache.New().
+			WithEvictionCallback(func(_, value interface{}) {
+				once.Do(func() {
+					close(callbackStarted)
+				})
+				defer GinkgoRecover()
+				evicted <- value.(string)
+			}).
+			WithMode(evcache.ModeBlocking).
+			Build()
+	})
+
+	When("callback is running", func() {
+		BeforeEach(func() {
+			c.Set("key", "value", 0)
+			c.Evict("key")
+			<-callbackStarted
+		})
+
+		Specify("Exists will not block and returns false", func() {
+			ok := c.Exists("key")
+			<-evicted
+			Expect(ok).To(BeFalse())
+
+			c.Close()
+			Expect(c.Len()).To(BeZero())
+		})
+
+		Specify("Evict will not block and returns false", func() {
+			_, ok := c.Evict("key")
+			<-evicted
+			Expect(ok).To(BeFalse())
+
+			c.Close()
+			Expect(c.Len()).To(BeZero())
+		})
+
+		Specify("Get will not block and returns false", func() {
+			_, _, ok := c.Get("key")
+			<-evicted
+			Expect(ok).To(BeFalse())
+
+			c.Close()
+			Expect(c.Len()).To(BeZero())
+		})
+
+		Specify("Pop will not block and returns nil", func() {
+			key, _ := c.Pop()
+			<-evicted
+			Expect(key).To(BeNil())
+
+			c.Close()
+			Expect(c.Len()).To(BeZero())
+		})
+
+		Specify("Range will not block and skips the key", func() {
+			c.Range(func(key, value interface{}) bool {
+				panic("unexpected Range callback")
+			})
+			<-evicted
+
+			c.Close()
+			Expect(c.Len()).To(BeZero())
+		})
+
+		Specify("Do will not block and skips the key", func() {
+			c.Do(func(key, value interface{}) bool {
+				panic("unexpected Do callback")
+			})
+			<-evicted
+
+			c.Close()
+			Expect(c.Len()).To(BeZero())
+		})
+
+		DescribeTable(
+			"blocking calls",
+			func(f func()) {
+				defer GinkgoRecover()
+				ret := make(chan struct{})
+				go func() {
+					defer close(ret)
+					defer GinkgoRecover()
+					f()
+				}()
+
+				select {
+				case <-evicted:
+					<-ret
+				case <-ret:
+					Fail("expected eviction callback to return first")
+					<-evicted
+				}
+
+				go func() {
+					// Unblock c.Close.
+					<-evicted
+				}()
+
+				c.Close()
+				Expect(c.Len()).To(BeZero())
+			},
+			Entry(
+				"Fetch blocks and returns a new value",
+				func() {
+					v, closer, _ := c.Fetch("key", 0, func() (interface{}, error) {
+						return "value1", nil
+					})
+					defer closer.Close()
+					Expect(v).To(Equal("value1"))
+				},
+			),
+			Entry(
+				"Set blocks and overwrites the value",
+				func() {
+					c.Set("key", "value1", 0)
+					value, closer, _ := c.Get("key")
+					defer closer.Close()
+					Expect(value).To(Equal("value1"))
+				},
+			),
+		)
 	})
 })
 
