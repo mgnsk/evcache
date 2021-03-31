@@ -92,6 +92,9 @@ func (build Builder) WithEvictionCallback(cb EvictionCallback) Builder {
 func (build Builder) WithMode(mode Mode) Builder {
 	return func(c *Cache) {
 		build(c)
+		if mode != ModeBlocking && mode != ModeNonBlocking {
+			panic("evcache: invalid mode")
+		}
 		c.mode = mode
 	}
 }
