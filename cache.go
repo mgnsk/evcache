@@ -429,11 +429,9 @@ func (c *Cache) load(key interface{}) *record {
 func (c *Cache) finalize(key interface{}, r *record) (value interface{}) {
 	if c.mode == ModeNonBlocking {
 		c.records.Delete(key)
-	}
-	r.mu.Lock()
-	if c.mode == ModeNonBlocking {
 		defer r.mu.Unlock()
 	}
+	r.mu.Lock()
 	value = r.loadAndReset()
 	if k := c.list.Remove(r.ring); k != nil && k != key {
 		panic("evcache: invalid ring")
