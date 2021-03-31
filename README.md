@@ -36,7 +36,7 @@ This is useful when the stored value needs to be hot-swapped without creating a 
 during concurrent usage. It allows new users to continue with the new value
 while the eviction callback for old value waits for users of the old value to return.
 
-To safely evict records in the non-blocking mode under concurrent usage, `Cache.CompareAndSwap`
+To safely evict records in the non-blocking mode under concurrent usage, `Cache.CompareAndEvict`
 must be used. Read the documentation of that method for more info.
 
 #### Eviction callback in blocking mode
