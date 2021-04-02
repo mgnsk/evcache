@@ -1,4 +1,5 @@
 # evcache
+
 [![Go Reference](https://pkg.go.dev/badge/github.com/mgnsk/evcache/v2.svg)](https://pkg.go.dev/github.com/mgnsk/evcache/v2)
 [![Go Report Card](https://goreportcard.com/badge/github.com/mgnsk/evcache)](https://goreportcard.com/report/github.com/mgnsk/evcache)
 [![Maintainability](https://api.codeclimate.com/v1/badges/2d6db0eb1dc3cbe2848c/maintainability)](https://codeclimate.com/github/mgnsk/evcache/maintainability)
@@ -48,43 +49,6 @@ This makes new writers wait eviction callback to have run which in turn waits fo
 old users to have finished using the old value before allowing `Fetch` or `Set`
 for that key to continue.
 
-TODO untested:
 If a user is holding an active value (has not closed the io.Closer yet)
 it is guaranteed that Evict returns the same exact value for the first concurrent user
 who called Evict for that key.
-
-## Usage
-
-An example of managing network connections:
-
-```go
-import "github.com/mgnsk/evcache/v2"
-
-func main() {
-    c := evcache.New().
-        WithEvictionCallback(func(key, value interface{}) {
-            // The callback will be called at a safe time
-            // after all users have released the key.
-            if err := value.(io.Closer).Close(); err != nil {
-                log.Fatal(err)
-            }
-        }).
-        WithCapacity(1000).
-        WithLFU().
-        Build()
-
-    conn, closer, err := c.Fetch("target", time.Minute, func() (interface{}, error) {
-        // Simplified example.
-        conn, err := Dial()
-        return conn, err
-    })
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer closer.Close() // Release the key.
-    if err := conn.RPC(); err != nil {
-        // Close once and only this conn.
-        c.CompareAndEvict("target", conn)
-    }
-}
-```

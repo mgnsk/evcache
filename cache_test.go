@@ -655,6 +655,8 @@ var _ = Describe("eviction callback with ModeBlocking", func() {
 					f()
 				}()
 
+				// This is safe only because evicted chan has no buffer.
+				// ret couldn't have been closed until we receive from evicted.
 				select {
 				case <-evicted:
 					<-ret
@@ -691,6 +693,91 @@ var _ = Describe("eviction callback with ModeBlocking", func() {
 				},
 			),
 		)
+	})
+})
+
+var _ = Describe("blocking in ModeBlocking", func() {
+	var (
+		once         sync.Once
+		readerDone   uint64
+		evictionDone uint64
+		c            *evcache.Cache
+	)
+
+	BeforeEach(func() {
+		once = sync.Once{}
+		readerDone = 0
+		evictionDone = 0
+		c = evcache.New().
+			WithEvictionCallback(func(_, _ interface{}) {
+				defer GinkgoRecover()
+				once.Do(func() {
+					time.Sleep(40 * time.Millisecond)
+					if !atomic.CompareAndSwapUint64(&evictionDone, 0, 1) {
+						Fail("expected for eviction callback to finish before Fetch and Set")
+					}
+				})
+			}).
+			WithEvictionMode(evcache.ModeBlocking).
+			Build()
+	})
+
+	Specify("new writers wait for old readers to finish for key", func() {
+		v, closer, _ := c.Fetch("key", 0, func() (interface{}, error) {
+			return "value", nil
+		})
+
+		evictedValue, ok := c.Evict("key")
+		Expect(ok).To(BeTrue())
+		Expect(evictedValue).To(Equal(v))
+
+		Expect(c.Len()).To(BeZero())
+
+		wg := sync.WaitGroup{}
+
+		wg.Add(1)
+		time.AfterFunc(20*time.Millisecond, func() {
+			defer wg.Done()
+			defer GinkgoRecover()
+			if !atomic.CompareAndSwapUint64(&readerDone, 0, 1) {
+				Fail("expected for close to return first")
+			}
+			closer.Close()
+		})
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer GinkgoRecover()
+			_, closer, _ := c.Fetch("key", 0, func() (interface{}, error) {
+				return "value1", nil
+			})
+			if atomic.CompareAndSwapUint64(&readerDone, 0, 1) {
+				Fail("expected to wait until old value closed")
+			}
+			if atomic.CompareAndSwapUint64(&evictionDone, 0, 1) {
+				Fail("expected for eviction callback to finish before Fetch and Set")
+			}
+			closer.Close()
+		}()
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer GinkgoRecover()
+			c.Set("key", "value2", 0)
+			if atomic.CompareAndSwapUint64(&readerDone, 0, 1) {
+				Fail("expected to wait until old value closed")
+			}
+			if atomic.CompareAndSwapUint64(&evictionDone, 0, 1) {
+				Fail("expected for eviction callback to finish before Fetch and Set")
+			}
+		}()
+
+		wg.Wait()
+
+		c.Close()
+		Expect(c.Len()).To(BeZero())
 	})
 })
 

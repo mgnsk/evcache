@@ -299,6 +299,10 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 		c.runLoopOnce()
 	}
 	doEvict := func(r *record) {
+		if c.mode == ModeNonBlocking && r.Evicting() {
+			r.evictionWg.Wait()
+			return
+		}
 		defer c.Evict(key)
 		if !r.Active() {
 			// Wait for any pending Fetch callback.
@@ -316,6 +320,7 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 			defer c.mu.Unlock()
 			front = c.list.PushBack(key, new.ring)
 			new.init(value, ttl)
+			new.setState(stateActive)
 			return
 		}
 		doEvict(old.(*record))
@@ -362,8 +367,9 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		front = c.list.PushBack(key, new.ring)
-		new.wg.Add(1)
+		new.readerWg.Add(1)
 		new.init(value, ttl)
+		new.setState(stateActive)
 		return nil, false
 	}
 	for {
@@ -378,6 +384,9 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 		if v, ok := r.LoadAndHit(); ok {
 			c.pool.Put(new)
 			return v, r, nil
+		}
+		if c.mode == ModeNonBlocking && r.Evicting() {
+			r.evictionWg.Wait()
 		}
 	}
 }
@@ -436,56 +445,37 @@ func (c *Cache) load(key interface{}) *record {
 // It is safe to lock r.mu while holding c.mu,
 // the record is already active.
 func (c *Cache) finalize(key interface{}, r *record) (value interface{}) {
-	switch c.mode {
-	case ModeNonBlocking:
-		return c.finalizeNonBlocking(key, r)
-	default:
-		return c.finalizeBlocking(key, r)
+	if c.mode == ModeNonBlocking {
+		c.records.Delete(key)
 	}
-}
-
-func (c *Cache) finalizeNonBlocking(key interface{}, r *record) (value interface{}) {
-	c.records.Delete(key)
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.setState(stateEvicting)
 	value = r.loadAndReset()
 	if k := c.list.Remove(r.ring); k != nil && k != key {
 		panic("evcache: invalid ring")
 	}
 	if c.afterEvict == nil {
+		r.setState(stateInactive)
 		c.pool.Put(r)
 		return value
+	}
+	if c.mode == ModeBlocking {
+		r.evictionWg.Add(1)
 	}
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
-		r.wg.Wait()
-		c.pool.Put(r)
-		c.afterEvict(key, value)
-	}()
-	return value
-}
-
-func (c *Cache) finalizeBlocking(key interface{}, r *record) (value interface{}) {
-	r.mu.Lock()
-	if c.afterEvict == nil {
-		defer r.mu.Unlock()
-	}
-	value = r.loadAndReset()
-	if k := c.list.Remove(r.ring); k != nil && k != key {
-		panic("evcache: invalid ring")
-	}
-	if c.afterEvict == nil {
-		c.pool.Put(r)
-		return value
-	}
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
-		r.wg.Wait()
-		defer c.pool.Put(r)
-		defer r.mu.Unlock()
-		defer c.records.Delete(key)
+		r.readerWg.Wait()
+		if c.mode == ModeNonBlocking {
+			r.setState(stateInactive)
+			c.pool.Put(r)
+		} else {
+			defer c.pool.Put(r)
+			defer r.evictionWg.Done()
+			defer r.setState(stateInactive)
+			defer c.records.Delete(key)
+		}
 		c.afterEvict(key, value)
 	}()
 	return value
