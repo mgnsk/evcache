@@ -38,7 +38,7 @@ func (r *record) Active() bool {
 	return atomic.LoadUint32(&r.state) == stateActive
 }
 
-func (r *record) IsEvicting() bool {
+func (r *record) Evicting() bool {
 	return atomic.LoadUint32(&r.state) == stateEvicting
 }
 
