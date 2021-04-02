@@ -31,8 +31,7 @@ type EvictionCallback func(key, value interface{})
 type EvictionMode int
 
 const (
-	// ModeNonBlocking configures EvictionCallback to
-	// not block access to the key being evicted.
+	// ModeNonBlocking configures EvictionCallback to run in the background.
 	//
 	// The key may be overwritten with a new value even
 	// before EvictionCallback starts for an old value.
@@ -40,10 +39,10 @@ const (
 	// This is the default mode.
 	ModeNonBlocking EvictionMode = iota
 
-	// ModeBlocking configures EvictionCallback to
-	// block Fetch and Set for the key being evicted.
+	// ModeBlocking configures Fetch and Set for key to block
+	// until EvictionCallback returns.
 	//
-	// It guarantees there only exists one version
+	// It guarantees there only exists only one version
 	// for a key at a time.
 	ModeBlocking
 )
@@ -87,12 +86,19 @@ func (build Builder) WithEvictionCallback(cb EvictionCallback) Builder {
 }
 
 // WithEvictionMode specifies an eviction blocking mode.
+// EvictionMode requires EvictionCallback to be configured.
 //
 // The default mode is ModeNonBlocking.
 func (build Builder) WithEvictionMode(mode EvictionMode) Builder {
 	return func(c *Cache) {
 		build(c)
-		if mode != ModeBlocking && mode != ModeNonBlocking {
+		if c.afterEvict == nil {
+			panic("evcache: WithEvictionMode requires WithEvictionCallback")
+		}
+		switch mode {
+		case ModeBlocking:
+		case ModeNonBlocking:
+		default:
 			panic("evcache: invalid mode")
 		}
 		c.mode = mode
@@ -129,9 +135,6 @@ func (build Builder) Build() *Cache {
 		stopLoop: make(chan struct{}),
 	}
 	build(c)
-	if c.mode == ModeBlocking && c.afterEvict == nil {
-		panic("evcache: WithEvictionMode requires WithEvictionCallback")
-	}
 	if c.list == nil {
 		c.list = newRingList(0)
 	}
