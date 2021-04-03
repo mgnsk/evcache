@@ -504,7 +504,7 @@ func (c *Cache) processRecords(now int64) {
 	c.records.Range(func(key, value interface{}) bool {
 		r := value.(*record)
 		if !r.Active() {
-			// Record is being fetched.
+			// Record is being fetched or eviction callback running.
 			return true
 		}
 		if r.Expired(now) {
