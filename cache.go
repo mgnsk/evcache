@@ -346,13 +346,18 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 // did not exist causing a store. If the value exists, Fetch will not block
 // unless an EvictionCallback is running for key in ModeBlocking.
 func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (value interface{}, closer io.Closer, err error) {
-	var front interface{}
+	var (
+		didLoad bool
+		front   interface{}
+	)
+	new := c.pool.Get().(*record)
 	defer func() {
-		if front != nil {
+		if didLoad {
+			c.pool.Put(new)
+		} else if front != nil {
 			c.Evict(front)
 		}
 	}()
-	new := c.pool.Get().(*record)
 	new.mu.Lock()
 	defer new.mu.Unlock()
 	loadOrStore := func() (old *record, loaded bool) {
@@ -378,14 +383,13 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 	for {
 		r, loaded := loadOrStore()
 		if err != nil {
-			c.pool.Put(new)
 			return nil, nil, err
 		}
 		if !loaded {
 			return value, new, nil
 		}
 		if v, ok := r.LoadAndHit(); ok {
-			c.pool.Put(new)
+			didLoad = true
 			return v, r, nil
 		}
 		if c.mode == ModeNonBlocking && r.Evicting() {
