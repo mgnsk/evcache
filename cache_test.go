@@ -547,10 +547,15 @@ var _ = Describe("eviction callback with ModeNonBlocking", func() {
 		value1, _ := c.Evict("key")
 
 		c.Set("key", "value2", 0)
-		value2, _ := c.Evict("key")
+		value2, closer, _ := c.Fetch("key", 0, func() (interface{}, error) {
+			return "value1", nil
+		})
+		defer closer.Close()
 
 		<-evicted
-		<-evicted
+		go func() {
+			<-evicted
+		}()
 
 		Expect(value1).To(Equal("value1"))
 		Expect(value2).To(Equal("value2"))
