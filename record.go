@@ -8,7 +8,8 @@ import (
 )
 
 const (
-	stateInactive uint32 = iota
+	// The default state represents a record being fetched.
+	_ uint32 = iota
 	stateActive
 	stateEvicting
 )
