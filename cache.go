@@ -453,35 +453,35 @@ func (c *Cache) load(key interface{}) *record {
 // the record is already active.
 func (c *Cache) finalize(key interface{}, r *record) (value interface{}) {
 	if c.mode == ModeNonBlocking {
+		// In non-blocking mode, new readers see an empty map immediately.
 		c.records.Delete(key)
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if c.mode == ModeBlocking {
+		r.evictionWg.Add(1)
+		if c.afterEvict == nil {
+			defer r.evictionWg.Done()
+		}
+	}
 	r.setState(stateEvicting)
 	value = r.loadAndReset()
 	if k := c.list.Remove(r.ring); k != nil && k != key {
 		panic("evcache: invalid ring")
 	}
-	if c.afterEvict == nil {
-		r.setState(stateInactive)
-		return value
+	if c.afterEvict != nil {
+		c.wg.Add(1)
+		go func() {
+			defer c.wg.Done()
+			r.readerWg.Wait()
+			if c.mode == ModeBlocking {
+				// In blocking mode, new readers load and wait for the old record.
+				defer r.evictionWg.Done()
+				defer c.records.Delete(key)
+			}
+			c.afterEvict(key, value)
+		}()
 	}
-	if c.mode == ModeBlocking {
-		r.evictionWg.Add(1)
-	}
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
-		r.readerWg.Wait()
-		if c.mode == ModeNonBlocking {
-			r.setState(stateInactive)
-		} else {
-			defer r.evictionWg.Done()
-			defer r.setState(stateInactive)
-			defer c.records.Delete(key)
-		}
-		c.afterEvict(key, value)
-	}()
 	return value
 }
 
