@@ -51,4 +51,5 @@ for that key to continue.
 
 If a user is holding an active value (has not closed the io.Closer yet)
 it is guaranteed that Evict returns the same exact value for the first concurrent user
-who called Evict for that key.
+who called Evict for that key. The key is prevented from being overwritten
+until all users close the closers.
