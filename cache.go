@@ -460,7 +460,6 @@ func (c *Cache) finalize(key interface{}, r *record) (value interface{}) {
 	}
 	if c.afterEvict == nil {
 		r.setState(stateInactive)
-		c.pool.Put(r)
 		return value
 	}
 	if c.mode == ModeBlocking {
@@ -472,9 +471,7 @@ func (c *Cache) finalize(key interface{}, r *record) (value interface{}) {
 		r.readerWg.Wait()
 		if c.mode == ModeNonBlocking {
 			r.setState(stateInactive)
-			c.pool.Put(r)
 		} else {
-			defer c.pool.Put(r)
 			defer r.evictionWg.Done()
 			defer r.setState(stateInactive)
 			defer c.records.Delete(key)
