@@ -5,6 +5,9 @@
 [![Maintainability](https://api.codeclimate.com/v1/badges/2d6db0eb1dc3cbe2848c/maintainability)](https://codeclimate.com/github/mgnsk/evcache/maintainability)
 [![codecov](https://codecov.io/gh/mgnsk/evcache/branch/master/graph/badge.svg?token=8S4JNGTOST)](https://codecov.io/gh/mgnsk/evcache)
 
+
+[Benchmarks](https://mgnsk.github.io/evcache/dev/bench)
+
 ## How it works
 
 The cache is a wrapper for `sync.Map` with autoexpiry, capacity limit and record ordering.
