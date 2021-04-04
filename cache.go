@@ -31,23 +31,23 @@ type EvictionCallback func(key, value interface{})
 type EvictionMode int
 
 const (
-	// ModeNonBlocking configures EvictionCallback to run in the background.
-	//
-	// The key may be overwritten with a new value even
-	// before EvictionCallback starts for an old value.
+	// ModeNonBlocking allows keys to be overwritten with a new value
+	// while there are active users for an old value or before
+	// EvictionCallback starts for an old value.
 	//
 	// This is the default mode.
 	ModeNonBlocking EvictionMode = iota
 
 	// ModeBlocking configures Fetch and Set for key to block
-	// until EvictionCallback returns.
+	// until all readers of old value finish and
+	// EvictionCallback returns.
 	//
 	// It guarantees there only exists only one version
 	// for a key at a time.
 	ModeBlocking
 )
 
-// Cache is an in-memory ordered cache with optional eventually consistent LFU ordering.
+// Cache is an in-memory ordered cache.
 type Cache struct {
 	records    sync.Map
 	pool       sync.Pool
@@ -76,8 +76,6 @@ func New() Builder {
 
 // WithEvictionCallback specifies an asynchronous eviction callback.
 // After record is evicted from cache, the callback is guaranteed to run.
-//
-// By default, the callback is run in ModeNonBlocking.
 func (build Builder) WithEvictionCallback(cb EvictionCallback) Builder {
 	return func(c *Cache) {
 		build(c)
@@ -86,7 +84,6 @@ func (build Builder) WithEvictionCallback(cb EvictionCallback) Builder {
 }
 
 // WithEvictionMode specifies an eviction blocking mode.
-// EvictionMode requires EvictionCallback to be configured.
 //
 // The default mode is ModeNonBlocking.
 func (build Builder) WithEvictionMode(mode EvictionMode) Builder {
@@ -285,9 +282,10 @@ func (c *Cache) CompareAndEvict(key, value interface{}) bool {
 // depending on whether LFU ordering is enabled or not.
 //
 // Set may block until a concurrent Fetch callback for key has returned
-// and then immediately overwrite the value. It also blocks when a
-// concurrent Do is running or when an EvictionCallback is running
-// for key in ModeBlocking.
+// and then immediately overwrite the value. It also blocks when
+// a concurrent Do is running or when ModeBlocking is used and
+// the value is being evicted. It then blocks until all readers
+// finish and EvictionCallback returns.
 func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 	var front interface{}
 	defer func() {
@@ -340,8 +338,11 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 // Fetch may block until a concurrent Fetch callback for key has returned and will return
 // that new value or continues with fetching a new value if the concurrent callback
 // returned an error. It may also block if a concurrent Do is running and the value
-// did not exist causing a store. If the value exists, Fetch will not block
-// unless an EvictionCallback is running for key in ModeBlocking.
+// did not exist causing a store.
+//
+// If the value exists, Fetch will not block unless ModeBlocking is used
+// and the value is being evicted. It then blocks until all readers
+// finish and EvictionCallback returns.
 func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (value interface{}, closer io.Closer, err error) {
 	var (
 		didLoad bool
