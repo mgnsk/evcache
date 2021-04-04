@@ -28,10 +28,10 @@ wrapped in `io.Closer` whenever a record is read which when closed, calls `wg.Do
 
 There are two modes of eviction: the `ModeNonBlocking` which is the default mode and `ModeBlocking`.
 
-#### Eviction callback in non-blocking mode
+#### Non-blocking mode
 
-In the non-blocking mode, an evicted record whose asynchronous eviction callback has not run yet
-will not block the cache key from being overwritten with a new value.
+In the non-blocking mode, an evicted record whose is currently being held active or whose
+asynchronous eviction callback has not run yet will not block the cache key from being overwritten with a new value.
 
 This is useful when the stored value needs to be hot-swapped without creating a pause
 during concurrent usage. It allows new users to continue with the new value
@@ -40,14 +40,10 @@ while the eviction callback for old value waits for users of the old value to re
 To safely evict records in the non-blocking mode under concurrent usage, `Cache.CompareAndEvict`
 must be used. Read the documentation of that method for more info.
 
-#### Eviction callback in blocking mode
+#### Blocking mode
 
-In the blocking mode, the pending callback makes `Fetch` and `Set` for that key block
-until it runs and returns. It does not block other keys.
-
-This makes new writers wait eviction callback to have run which in turn waits for
-old users to have finished using the old value before allowing `Fetch` or `Set`
-for that key to continue.
+In the blocking mode, `Fetch` and `Set` wait for all readers of old value to finish
+and `EvictionCallback` to have run before writing a new value.
 
 If a user is holding an active value (has not closed the io.Closer yet)
 it is guaranteed that Evict returns the same exact value for the first concurrent user
