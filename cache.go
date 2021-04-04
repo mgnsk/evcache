@@ -464,6 +464,9 @@ func (c *Cache) finalize(key interface{}, r *record) (value interface{}) {
 		panic("evcache: invalid ring")
 	}
 	value = r.value
+	if c.mode == ModeNonBlocking && c.afterEvict == nil {
+		return value
+	}
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
