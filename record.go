@@ -81,11 +81,3 @@ func (r *record) init(value interface{}, ttl time.Duration) {
 		atomic.StoreInt64(&r.expires, time.Now().Add(ttl).UnixNano())
 	}
 }
-
-func (r *record) loadAndReset() interface{} {
-	value := r.value
-	r.value = nil
-	atomic.StoreInt64(&r.expires, 0)
-	atomic.StoreUint32(&r.hits, 0)
-	return value
-}

@@ -703,87 +703,102 @@ var _ = Describe("eviction callback with ModeBlocking", func() {
 
 var _ = Describe("blocking in ModeBlocking", func() {
 	var (
-		once         sync.Once
+		onceCallback sync.Once
 		readerDone   uint64
 		evictionDone uint64
-		c            *evcache.Cache
 	)
 
 	BeforeEach(func() {
-		once = sync.Once{}
+		onceCallback = sync.Once{}
 		readerDone = 0
 		evictionDone = 0
-		c = evcache.New().
-			WithEvictionCallback(func(_, _ interface{}) {
-				defer GinkgoRecover()
-				once.Do(func() {
-					time.Sleep(40 * time.Millisecond)
-					if !atomic.CompareAndSwapUint64(&evictionDone, 0, 1) {
-						Fail("expected for eviction callback to finish before Fetch and Set")
-					}
-				})
-			}).
-			WithEvictionMode(evcache.ModeBlocking).
-			Build()
 	})
 
-	Specify("new writers wait for old readers to finish for key", func() {
-		v, closer, _ := c.Fetch("key", 0, func() (interface{}, error) {
-			return "value", nil
-		})
+	DescribeTable(
+		"new writers wait for old readers to finish for key",
+		func(builder evcache.Builder, hasCallback bool) {
+			c := builder.Build()
 
-		evictedValue, ok := c.Evict("key")
-		Expect(ok).To(BeTrue())
-		Expect(evictedValue).To(Equal(v))
-
-		Expect(c.Len()).To(BeZero())
-
-		wg := sync.WaitGroup{}
-
-		wg.Add(1)
-		time.AfterFunc(20*time.Millisecond, func() {
-			defer wg.Done()
-			defer GinkgoRecover()
-			if !atomic.CompareAndSwapUint64(&readerDone, 0, 1) {
-				Fail("expected for close to return first")
-			}
-			closer.Close()
-		})
-
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			defer GinkgoRecover()
-			_, closer, _ := c.Fetch("key", 0, func() (interface{}, error) {
-				return "value1", nil
+			v, closer, _ := c.Fetch("key", 0, func() (interface{}, error) {
+				return "value", nil
 			})
-			if atomic.CompareAndSwapUint64(&readerDone, 0, 1) {
-				Fail("expected to wait until old value closed")
-			}
-			if atomic.CompareAndSwapUint64(&evictionDone, 0, 1) {
-				Fail("expected for eviction callback to finish before Fetch and Set")
-			}
-			closer.Close()
-		}()
 
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			defer GinkgoRecover()
-			c.Set("key", "value2", 0)
-			if atomic.CompareAndSwapUint64(&readerDone, 0, 1) {
-				Fail("expected to wait until old value closed")
-			}
-			if atomic.CompareAndSwapUint64(&evictionDone, 0, 1) {
-				Fail("expected for eviction callback to finish before Fetch and Set")
-			}
-		}()
+			evictedValue, ok := c.Evict("key")
+			Expect(ok).To(BeTrue())
+			Expect(evictedValue).To(Equal(v))
 
-		wg.Wait()
+			Expect(c.Len()).To(BeZero())
 
-		c.Close()
-		Expect(c.Len()).To(BeZero())
-	})
+			wg := sync.WaitGroup{}
+
+			wg.Add(1)
+			time.AfterFunc(20*time.Millisecond, func() {
+				defer wg.Done()
+				defer GinkgoRecover()
+				if !atomic.CompareAndSwapUint64(&readerDone, 0, 1) {
+					Fail("expected for close to return first")
+				}
+				// Finally close the closer.
+				closer.Close()
+			})
+
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				defer GinkgoRecover()
+				v, closer, _ := c.Fetch("key", 0, func() (interface{}, error) {
+					return "value1", nil
+				})
+				if atomic.CompareAndSwapUint64(&readerDone, 0, 1) {
+					Fail("expected to wait until old value closed")
+				}
+				if hasCallback && atomic.CompareAndSwapUint64(&evictionDone, 0, 1) {
+					Fail("expected for eviction callback to finish before Fetch and Set")
+				}
+				// value1 or value2
+				Expect(v).NotTo(Equal("value"))
+				closer.Close()
+			}()
+
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				defer GinkgoRecover()
+				c.Set("key", "value2", 0)
+				if atomic.CompareAndSwapUint64(&readerDone, 0, 1) {
+					Fail("expected to wait until old value closed")
+				}
+				if hasCallback && atomic.CompareAndSwapUint64(&evictionDone, 0, 1) {
+					Fail("expected for eviction callback to finish before Fetch and Set")
+				}
+			}()
+
+			wg.Wait()
+
+			c.Close()
+			Expect(c.Len()).To(BeZero())
+		},
+		Entry(
+			"without EvictionCallback",
+			evcache.New().WithEvictionMode(evcache.ModeBlocking),
+			false,
+		),
+		Entry(
+			"with EvictionCallback",
+			evcache.New().
+				WithEvictionCallback(func(_, _ interface{}) {
+					defer GinkgoRecover()
+					onceCallback.Do(func() {
+						time.Sleep(40 * time.Millisecond)
+						if !atomic.CompareAndSwapUint64(&evictionDone, 0, 1) {
+							Fail("expected for eviction callback to finish before Fetch and Set")
+						}
+					})
+				}).
+				WithEvictionMode(evcache.ModeBlocking),
+			true,
+		),
+	)
 })
 
 var _ = Describe("Fetch fails with an error", func() {
@@ -1061,9 +1076,10 @@ var _ = Describe("concurrency test", func() {
 			go func() {
 				defer wg.Done()
 				for i := 0; i < n; i++ {
-					_, _, _ = c.Fetch(atomic.AddUint64(&key, 1), 0, func() (interface{}, error) {
+					_, closer, _ := c.Fetch(atomic.AddUint64(&key, 1), 0, func() (interface{}, error) {
 						return 0, nil
 					})
+					closer.Close()
 				}
 			}()
 		}

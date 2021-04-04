@@ -92,9 +92,6 @@ func (build Builder) WithEvictionCallback(cb EvictionCallback) Builder {
 func (build Builder) WithEvictionMode(mode EvictionMode) Builder {
 	return func(c *Cache) {
 		build(c)
-		if c.afterEvict == nil {
-			panic("evcache: WithEvictionMode requires WithEvictionCallback")
-		}
 		switch mode {
 		case ModeBlocking:
 		case ModeNonBlocking:
@@ -302,7 +299,7 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 		c.runLoopOnce()
 	}
 	doEvict := func(r *record) {
-		if c.mode == ModeNonBlocking && r.Evicting() {
+		if c.mode == ModeBlocking && r.Evicting() {
 			r.evictionWg.Wait()
 			return
 		}
@@ -392,7 +389,7 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 			didLoad = true
 			return v, r, nil
 		}
-		if c.mode == ModeNonBlocking && r.Evicting() {
+		if c.mode == ModeBlocking && r.Evicting() {
 			r.evictionWg.Wait()
 		}
 	}
@@ -452,36 +449,33 @@ func (c *Cache) load(key interface{}) *record {
 // It is safe to lock r.mu while holding c.mu,
 // the record is already active.
 func (c *Cache) finalize(key interface{}, r *record) (value interface{}) {
-	if c.mode == ModeNonBlocking {
+	switch c.mode {
+	case ModeNonBlocking:
 		// In non-blocking mode, new writers see an empty map immediately.
 		c.records.Delete(key)
+	case ModeBlocking:
+		// In blocking mode, new writers load and wait for the old record.
+		r.evictionWg.Add(1)
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if c.mode == ModeBlocking {
-		r.evictionWg.Add(1)
-		if c.afterEvict == nil {
-			defer r.evictionWg.Done()
-		}
-	}
 	r.setState(stateEvicting)
-	value = r.loadAndReset()
 	if k := c.list.Remove(r.ring); k != nil && k != key {
 		panic("evcache: invalid ring")
 	}
-	if c.afterEvict != nil {
-		c.wg.Add(1)
-		go func() {
-			defer c.wg.Done()
-			r.readerWg.Wait()
-			if c.mode == ModeBlocking {
-				// In blocking mode, new writers load and wait for the old record.
-				defer r.evictionWg.Done()
-				defer c.records.Delete(key)
-			}
+	value = r.value
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		if c.mode == ModeBlocking {
+			defer r.evictionWg.Done()
+			defer c.records.Delete(key)
+		}
+		r.readerWg.Wait()
+		if c.afterEvict != nil {
 			c.afterEvict(key, value)
-		}()
-	}
+		}
+	}()
 	return value
 }
 
