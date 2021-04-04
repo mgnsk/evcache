@@ -453,7 +453,7 @@ func (c *Cache) load(key interface{}) *record {
 // the record is already active.
 func (c *Cache) finalize(key interface{}, r *record) (value interface{}) {
 	if c.mode == ModeNonBlocking {
-		// In non-blocking mode, new readers see an empty map immediately.
+		// In non-blocking mode, new writers see an empty map immediately.
 		c.records.Delete(key)
 	}
 	r.mu.Lock()
@@ -475,7 +475,7 @@ func (c *Cache) finalize(key interface{}, r *record) (value interface{}) {
 			defer c.wg.Done()
 			r.readerWg.Wait()
 			if c.mode == ModeBlocking {
-				// In blocking mode, new readers load and wait for the old record.
+				// In blocking mode, new writers load and wait for the old record.
 				defer r.evictionWg.Done()
 				defer c.records.Delete(key)
 			}
