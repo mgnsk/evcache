@@ -55,6 +55,7 @@ jobs:
           fail-on-alert: true
           github-token: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
           comment-on-alert: true
+          auto-push: true
 
   lint:
     runs-on: ubuntu-latest
