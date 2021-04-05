@@ -24,26 +24,22 @@ type FetchCallback func() (interface{}, error)
 
 // EvictionCallback is guaranteed to run in a new goroutine when a cache record is evicted.
 //
-// It waits until all io.Closers returned by Get or Fetch are closed before running.
+// It runs after all transactions for key have finished.
 type EvictionCallback func(key, value interface{})
 
-// EvictionMode specifies the mode in which keys block during eviction.
+// EvictionMode specifies how transactions and eviction callback behave.
+//
+// A transaction is the io.Closer returned with each record.
 type EvictionMode int
 
 const (
-	// ModeNonBlocking allows keys to be overwritten with a new value
-	// while there are active users for an old value or before
-	// EvictionCallback starts for an old value.
+	// ModeNonBlocking allows keys to be overwritten while having active transactions.
 	//
 	// This is the default mode.
 	ModeNonBlocking EvictionMode = iota
 
-	// ModeBlocking configures Fetch and Set for key to block
-	// until all readers of old value finish and
-	// EvictionCallback returns.
-	//
-	// It guarantees there only exists only one version
-	// for a key at a time.
+	// ModeBlocking configures transactions and EvictionCallback
+	// to block writers for the same key after being evicted.
 	ModeBlocking
 )
 
@@ -243,9 +239,8 @@ func (c *Cache) Evict(key interface{}) (value interface{}, ok bool) {
 }
 
 // CompareAndEvict evicts the key only if its value is deeply equal to old.
-//
-// It is useful in ModeNonBlocking where holding an active record
-// does not prevent the value for key from concurrently changing.
+// It is the only way to safely evict records in ModeNonBlocking
+// under concurrent use.
 //
 // This method is safe only if value is unique. If this is not the case,
 // such as when values are pooled then the user must make sure that this
@@ -283,9 +278,10 @@ func (c *Cache) CompareAndEvict(key, value interface{}) bool {
 //
 // Set may block until a concurrent Fetch callback for key has returned
 // and then immediately overwrite the value. It also blocks when
-// a concurrent Do is running or when ModeBlocking is used and
-// the value is being evicted. It then blocks until all readers
-// finish and EvictionCallback returns.
+// a concurrent Do is running.
+//
+// If ModeBlocking is used, it blocks until all transactions and
+// eviction callback have finished for key.
 func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 	var front interface{}
 	defer func() {
@@ -337,12 +333,13 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 //
 // Fetch may block until a concurrent Fetch callback for key has returned and will return
 // that new value or continues with fetching a new value if the concurrent callback
-// returned an error. It may also block if a concurrent Do is running and the value
+// returned an error. It also blocks if a concurrent Do is running and the value
 // did not exist causing a store.
 //
-// If the value exists, Fetch will not block unless ModeBlocking is used
-// and the value is being evicted. It then blocks until all readers
-// finish and EvictionCallback returns.
+// If ModeBlocking is used and the value is being evicted, it blocks until
+// all transactions and eviction callback have finished for key.
+//
+// If the value exists, Fetch will not block.
 func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (value interface{}, closer io.Closer, err error) {
 	var (
 		didLoad bool
@@ -402,8 +399,8 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 // Do stops the iteration.
 //
 // Do blocks Pop, Evict, Set and Fetch (only if it stores a value).
-// It does not visit keys whose Fetch callback is currently running.
-// f is not allowed to modify the cache.
+// It does not visit keys whose Fetch or eviction callback is
+// currently running. f is not allowed to modify the cache.
 func (c *Cache) Do(f func(key, value interface{}) bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
