@@ -5,7 +5,6 @@
 [![Maintainability](https://api.codeclimate.com/v1/badges/2d6db0eb1dc3cbe2848c/maintainability)](https://codeclimate.com/github/mgnsk/evcache/maintainability)
 [![codecov](https://codecov.io/gh/mgnsk/evcache/branch/master/graph/badge.svg?token=8S4JNGTOST)](https://codecov.io/gh/mgnsk/evcache)
 
-
 [Benchmarks](https://mgnsk.github.io/evcache/dev/bench)
 
 ## How it works
@@ -26,29 +25,32 @@ Eventually the list becomes LFU ordered.
 ### Eviction callback
 
 The cache provides an eviction callback for each record which can be used to safely
-dispose of stored values after all usage has stopped. The usage is tracked by returning a waitgroup
-wrapped in `io.Closer` whenever a record is read which when closed, calls `wg.Done()`.
+dispose of stored values after all usage has stopped.
 
-There are two modes of eviction: the `ModeNonBlocking` which is the default mode and `ModeBlocking`.
+### Transactions and eviction mode
+
+The cache uses waitgroups wrapped in `io.Closer` to track records returned to the user which forms a transaction.
+Transactions behave depending of `EvictionMode`. There are two kinds of modes: the `ModeNonBlocking` which is the default mode and `ModeBlocking`.
 
 #### Non-blocking mode
 
-In the non-blocking mode, an evicted record whose is currently being held active or whose
-asynchronous eviction callback has not run yet will not block the cache key from being overwritten with a new value.
+In `ModeNonBlocking` mode, an active transaction does not prevent a key from being concurrently overwritten.
 
-This is useful when the stored value needs to be hot-swapped without creating a pause
-during concurrent usage. It allows new users to continue with the new value
-while the eviction callback for old value waits for users of the old value to return.
+For example, if there are multiple goroutines running `Cache.Fetch` in a loop and a key expires, the next
+fetcher will set a new value which will eventually propagate to all loops.
 
-To safely evict records in the non-blocking mode under concurrent usage, `Cache.CompareAndEvict`
-must be used. Read the documentation of that method for more info.
+The hot swap is unnoticeable while in the background, the eviction callback waits for transactions
+for the old value to finish and then runs.
+
+It is not safe to use `Cache.Evict` concurrently in this mode - the concurrent new value may be falsely evicted!
+To safely evict records in the non-blocking mode see the documentation on `Cache.CompareAndEvict`.
 
 #### Blocking mode
 
-In the blocking mode, `Fetch` and `Set` wait for all readers of old value to finish
-and `EvictionCallback` to have run before writing a new value.
+In `ModeBlocking` mode, an active transaction and eviction callback prevent a key from being concurrently overwritten.
 
-If a user is holding an active value (has not closed the io.Closer yet)
-it is guaranteed that Evict returns the same exact value for the first concurrent user
-who called Evict for that key. The key is prevented from being overwritten
-until all users close the closers.
+The swap is noticeable to users since all calls to `Fetch` and `Set` for that key will block until the transactions
+and callback finish.
+
+It is guaranteed that while holding an active transaction, a concurrent call to `Cache.Evict` for that key returns the exact
+same value to the first caller. Subsequent callers, in a transaction for that key, return false.
