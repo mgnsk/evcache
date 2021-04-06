@@ -293,15 +293,13 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 		c.runLoopOnce()
 	}
 	doEvict := func(r *record) {
-		if c.mode == ModeBlocking && r.Evicting() {
-			r.evictionWg.Wait()
-			return
-		}
 		defer c.Evict(key)
 		if !r.Active() {
-			// Wait for any pending Fetch callback.
 			r.mu.Lock()
 			defer r.mu.Unlock()
+			if c.mode == ModeBlocking && r.Evicting() {
+				r.wg.Wait()
+			}
 		}
 	}
 	new := c.pool.Get().(*record)
@@ -370,7 +368,7 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		front = c.list.PushBack(key, new.ring)
-		new.readerWg.Add(1)
+		new.wg.Add(1)
 		new.init(value, ttl)
 		new.setState(stateActive)
 		return nil, false
@@ -387,8 +385,10 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 			didLoad = true
 			return v, r, nil
 		}
-		if c.mode == ModeBlocking && r.Evicting() {
-			r.evictionWg.Wait()
+		if c.mode == ModeBlocking {
+			r.mu.Lock()
+			r.wg.Wait()
+			r.mu.Unlock()
 		}
 	}
 }
@@ -447,13 +447,8 @@ func (c *Cache) load(key interface{}) *record {
 // It is safe to lock r.mu while holding c.mu,
 // the record is already active.
 func (c *Cache) finalize(key interface{}, r *record) (value interface{}) {
-	switch c.mode {
-	case ModeNonBlocking:
-		// In non-blocking mode, new writers see an empty map immediately.
+	if c.mode == ModeNonBlocking {
 		c.records.Delete(key)
-	case ModeBlocking:
-		// In blocking mode, new writers load and wait for the old record.
-		r.evictionWg.Add(1)
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -468,11 +463,16 @@ func (c *Cache) finalize(key interface{}, r *record) (value interface{}) {
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
+		r.wg.Wait()
 		if c.mode == ModeBlocking {
-			defer r.evictionWg.Done()
 			defer c.records.Delete(key)
+			// Readers may do an extra spin after first waiting for
+			// transactions and then continue waiting for eviction.
+			r.mu.Lock()
+			r.wg.Add(1)
+			defer r.wg.Done()
+			r.mu.Unlock()
 		}
-		r.readerWg.Wait()
 		if c.afterEvict != nil {
 			c.afterEvict(key, value)
 		}
