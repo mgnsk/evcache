@@ -455,8 +455,6 @@ func (c *Cache) finalize(key interface{}, r *record) (value interface{}) {
 		// In blocking mode, new writers load and wait for the old record.
 		r.evictionWg.Add(1)
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.setState(stateEvicting)
 	if k := c.list.Remove(r.ring); k != nil && k != key {
 		panic("evcache: invalid ring")
