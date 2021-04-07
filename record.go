@@ -10,8 +10,8 @@ import (
 const (
 	// The default state represents a record being fetched.
 	_ uint32 = iota
-	stateActive
-	stateEvicting
+	active
+	evicting
 )
 
 type record struct {
@@ -30,17 +30,22 @@ func newRecord() *record {
 	return &record{ring: ring.New(1)}
 }
 
-func (r *record) Close() error {
-	r.readerWg.Done()
-	return nil
+func (r *record) Init(value interface{}, ttl time.Duration) {
+	r.value = value
+	if ttl > 0 {
+		atomic.StoreInt64(&r.expires, time.Now().Add(ttl).UnixNano())
+	}
 }
 
-func (r *record) Active() bool {
-	return atomic.LoadUint32(&r.state) == stateActive
+func (r *record) SetState(newState uint32) {
+	prevState := (newState + 3 - 1) % 3
+	if !atomic.CompareAndSwapUint32(&r.state, prevState, newState) {
+		panic("evcache: invalid record state")
+	}
 }
 
-func (r *record) Evicting() bool {
-	return atomic.LoadUint32(&r.state) == stateEvicting
+func (r *record) State() uint32 {
+	return atomic.LoadUint32(&r.state)
 }
 
 func (r *record) Expired(now int64) bool {
@@ -48,10 +53,13 @@ func (r *record) Expired(now int64) bool {
 	return expires > 0 && expires < now
 }
 
-func (r *record) Load() (interface{}, bool) {
+func (r *record) TryLoad() (interface{}, bool) {
+	if r.State() != active {
+		return nil, false
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if !r.Active() {
+	if r.State() != active {
 		return nil, false
 	}
 	return r.value, true
@@ -60,7 +68,7 @@ func (r *record) Load() (interface{}, bool) {
 func (r *record) LoadAndHit() (interface{}, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if !r.Active() {
+	if r.State() != active {
 		return nil, false
 	}
 	atomic.AddUint32(&r.hits, 1)
@@ -68,16 +76,7 @@ func (r *record) LoadAndHit() (interface{}, bool) {
 	return r.value, true
 }
 
-func (r *record) setState(newState uint32) {
-	prevState := (newState + 3 - 1) % 3
-	if !atomic.CompareAndSwapUint32(&r.state, prevState, newState) {
-		panic("evcache: invalid record state")
-	}
-}
-
-func (r *record) init(value interface{}, ttl time.Duration) {
-	r.value = value
-	if ttl > 0 {
-		atomic.StoreInt64(&r.expires, time.Now().Add(ttl).UnixNano())
-	}
+func (r *record) Close() error {
+	r.readerWg.Done()
+	return nil
 }
