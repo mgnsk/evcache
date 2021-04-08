@@ -9,7 +9,7 @@
 
 ## How it works
 
-The cache is a wrapper for `sync.Map` with autoexpiry, capacity limit and record ordering.
+The cache is a wrapper for `sync.Map` with transactions, autoexpiry, capacity limit and record ordering.
 It is similar to a non-blocking ordered map where writes do not block reads. Each value is wrapped
 in a record type and uses its own RWMutex.
 
