@@ -2,8 +2,6 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/mgnsk/evcache/v2.svg)](https://pkg.go.dev/github.com/mgnsk/evcache/v2)
 [![Go Report Card](https://goreportcard.com/badge/github.com/mgnsk/evcache)](https://goreportcard.com/report/github.com/mgnsk/evcache)
-[![Maintainability](https://api.codeclimate.com/v1/badges/2d6db0eb1dc3cbe2848c/maintainability)](https://codeclimate.com/github/mgnsk/evcache/maintainability)
-[![codecov](https://codecov.io/gh/mgnsk/evcache/branch/master/graph/badge.svg?token=8S4JNGTOST)](https://codecov.io/gh/mgnsk/evcache)
 
 [Benchmarks](https://mgnsk.github.io/evcache/dev/bench)
 
