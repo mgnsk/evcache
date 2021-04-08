@@ -9,7 +9,7 @@ import (
 )
 
 // SyncInterval is the interval for background loop
-// for autoexpiry and optional eventual LFU ordering.
+// which runs when autoexpiry or LFU is enabled.
 //
 // If cache overflows while LFU is enabled and records are created faster than
 // SyncInterval can update record ordering, the eviction starts losing LFU order
