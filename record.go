@@ -15,7 +15,7 @@ const (
 )
 
 type record struct {
-	mu         sync.RWMutex
+	fetchWg    sync.WaitGroup
 	readerWg   sync.WaitGroup
 	evictionWg sync.WaitGroup
 	ring       *ring.Ring
@@ -57,8 +57,7 @@ func (r *record) TryLoad() (interface{}, bool) {
 	if r.State() != active {
 		return nil, false
 	}
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	r.fetchWg.Wait()
 	if r.State() != active {
 		return nil, false
 	}
@@ -66,8 +65,7 @@ func (r *record) TryLoad() (interface{}, bool) {
 }
 
 func (r *record) LoadAndHit() (interface{}, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	r.fetchWg.Wait()
 	if r.State() != active {
 		return nil, false
 	}

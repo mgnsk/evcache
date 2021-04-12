@@ -270,15 +270,13 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 		case active:
 			c.Evict(key)
 		default:
-			defer c.Evict(key)
-			// Wait for any pending Fetch callback.
-			r.mu.Lock()
-			defer r.mu.Unlock()
+			r.fetchWg.Wait()
+			c.Evict(key)
 		}
 	}
 	new := c.pool.Get().(*record)
-	new.mu.Lock()
-	defer new.mu.Unlock()
+	new.fetchWg.Add(1)
+	defer new.fetchWg.Done()
 	for {
 		old, loaded := c.records.LoadOrStore(key, new)
 		if !loaded {
@@ -325,8 +323,8 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 			c.Evict(front)
 		}
 	}()
-	new.mu.Lock()
-	defer new.mu.Unlock()
+	new.fetchWg.Add(1)
+	defer new.fetchWg.Done()
 	loadOrStore := func() (old *record, loaded bool) {
 		if old, loaded := c.records.LoadOrStore(key, new); loaded {
 			return old.(*record), true
