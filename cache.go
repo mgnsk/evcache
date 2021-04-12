@@ -409,6 +409,13 @@ func (c *Cache) deleteLocked(key interface{}, target *interface{}) (value interf
 	if r.State() != active {
 		return nil, false
 	}
+	// Safe to lock r.mu on an active record
+	// while holding c.mu.
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.State() != active {
+		return nil, false
+	}
 	value = r.value
 	if target != nil && !reflect.DeepEqual(value, *target) {
 		return nil, false
