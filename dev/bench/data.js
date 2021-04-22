@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1619107365324,
+  "lastUpdate": 1619107451993,
   "repoUrl": "https://github.com/mgnsk/evcache",
   "entries": {
     "Benchmark": [
@@ -1200,6 +1200,78 @@ window.BENCHMARK_DATA = {
             "value": 492.5,
             "unit": "ns/op\t      16 B/op\t       1 allocs/op",
             "extra": "2494045 times\n2 procs"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "magnus@kokk.eu",
+            "name": "Magnus Kokk",
+            "username": "mgnsk"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7cc15c52e623ac0f1177b1bf7c68a627a058ea1f",
+          "message": "Merge pull request #32 from mgnsk/enforce-invariants\n\nEnforce invariants, always set record state on eviction",
+          "timestamp": "2021-04-22T19:02:56+03:00",
+          "tree_id": "ec122585cfd8a4c996c47d54584171c178f4218f",
+          "url": "https://github.com/mgnsk/evcache/commit/7cc15c52e623ac0f1177b1bf7c68a627a058ea1f"
+        },
+        "date": 1619107451172,
+        "tool": "go",
+        "benches": [
+          {
+            "name": "BenchmarkCapacityParallel",
+            "value": 1365,
+            "unit": "ns/op\t     234 B/op\t       6 allocs/op",
+            "extra": "935316 times\n2 procs"
+          },
+          {
+            "name": "BenchmarkFetchAndEvictParallel",
+            "value": 352.7,
+            "unit": "ns/op\t      79 B/op\t       1 allocs/op",
+            "extra": "3308757 times\n2 procs"
+          },
+          {
+            "name": "BenchmarkGet",
+            "value": 295.1,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "4110742 times\n2 procs"
+          },
+          {
+            "name": "BenchmarkSetNotExists",
+            "value": 1788,
+            "unit": "ns/op\t     283 B/op\t       5 allocs/op",
+            "extra": "1000000 times\n2 procs"
+          },
+          {
+            "name": "BenchmarkSetExists",
+            "value": 865.3,
+            "unit": "ns/op\t     160 B/op\t       4 allocs/op",
+            "extra": "1399557 times\n2 procs"
+          },
+          {
+            "name": "BenchmarkFetchExists",
+            "value": 600.9,
+            "unit": "ns/op\t       7 B/op\t       0 allocs/op",
+            "extra": "2605719 times\n2 procs"
+          },
+          {
+            "name": "BenchmarkFetchNotExists",
+            "value": 1735,
+            "unit": "ns/op\t     283 B/op\t       5 allocs/op",
+            "extra": "1000000 times\n2 procs"
+          },
+          {
+            "name": "BenchmarkPop",
+            "value": 517.1,
+            "unit": "ns/op\t      16 B/op\t       1 allocs/op",
+            "extra": "2340403 times\n2 procs"
           }
         ]
       }
