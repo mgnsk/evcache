@@ -9,7 +9,7 @@ on:
 
 jobs:
   test:
-    name: Test coverage
+    name: Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
@@ -19,10 +19,8 @@ jobs:
         with:
           go-version: 1.16
 
-      - name: Run coverage
-        run: go test -race -coverprofile=coverage.txt -covermode=atomic
-      - name: Upload coverage to Codecov
-        run: bash <(curl -s https://codecov.io/bash)
+      - name: Run test
+        run: go test -race
 
   benchmark:
     name: Performance regression check
@@ -68,4 +66,3 @@ jobs:
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v2
-
