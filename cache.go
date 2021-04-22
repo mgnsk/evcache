@@ -285,8 +285,8 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 			c.mu.Lock()
 			defer c.mu.Unlock()
 			front = c.list.PushBack(key, new.ring)
-			new.Init(value, ttl)
-			new.SetState(active)
+			new.init(value, ttl)
+			new.setState(active)
 			return
 		}
 		doEvict(old.(*record))
@@ -343,8 +343,8 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 		defer c.mu.Unlock()
 		front = c.list.PushBack(key, new.ring)
 		new.readerWg.Add(1)
-		new.Init(value, ttl)
-		new.SetState(active)
+		new.init(value, ttl)
+		new.setState(active)
 		return nil, false
 	}
 	for {
@@ -424,7 +424,7 @@ func (c *Cache) deleteLocked(key interface{}, target *interface{}) (value interf
 	case ModeBlocking:
 		// In blocking mode, new writers load and wait for the old record.
 		r.evictionWg.Add(1)
-		r.SetState(evicting)
+		r.setState(evicting)
 	}
 	if k := c.list.Remove(r.ring); k != nil && k != key {
 		panic("evcache: invalid ring")
@@ -473,7 +473,7 @@ func (c *Cache) processRecords(now int64) {
 			// Record is being fetched or eviction callback running.
 			return true
 		}
-		if r.Expired(now) {
+		if deadline := r.Deadline(); deadline > 0 && deadline < now {
 			c.deleteLocked(key, nil)
 			return true
 		}
