@@ -138,10 +138,8 @@ func (build Builder) Build() *Cache {
 //
 // Exists is a non-blocking operation.
 func (c *Cache) Exists(key interface{}) bool {
-	if r, ok := c.records.Load(key); ok && r.(*record).State() == active {
-		return true
-	}
-	return false
+	r, ok := c.records.Load(key)
+	return ok && r.(*record).State() == active
 }
 
 // Get returns the value stored in the cache for a key. The boolean indicates
@@ -193,14 +191,13 @@ func (c *Cache) Len() int {
 func (c *Cache) Pop() (key, value interface{}) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if key = c.list.Pop(); key == nil {
-		return nil, nil
+	if key := c.list.Pop(); key != nil {
+		if value, ok := c.deleteLocked(key, nil); ok {
+			return key, value
+		}
+		panic("evcache: invalid cache state")
 	}
-	value, ok := c.deleteLocked(key, nil)
-	if !ok {
-		return nil, nil
-	}
-	return key, value
+	return nil, nil
 }
 
 // Flush evicts all keys from the cache.
@@ -258,17 +255,14 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 			c.Evict(front)
 		}
 	}()
-	if ttl > 0 {
-		c.runLoopOnce()
-	}
 	doEvict := func(r *record) {
 		switch r.State() {
+		case active:
+			c.Evict(key)
 		case evicting:
 			if c.mode == ModeBlocking {
 				r.evictionWg.Wait()
 			}
-		case active:
-			c.Evict(key)
 		default:
 			defer c.Evict(key)
 			// Wait for any pending Fetch callback.
@@ -287,6 +281,9 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 			front = c.list.PushBack(key, new.ring)
 			new.init(value, ttl)
 			new.setState(active)
+			if ttl > 0 {
+				c.runLoopOnce()
+			}
 			return
 		}
 		doEvict(old.(*record))
@@ -336,15 +333,15 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 			c.records.Delete(key)
 			return nil, false
 		}
-		if ttl > 0 {
-			c.runLoopOnce()
-		}
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		front = c.list.PushBack(key, new.ring)
 		new.readerWg.Add(1)
 		new.init(value, ttl)
 		new.setState(active)
+		if ttl > 0 {
+			c.runLoopOnce()
+		}
 		return nil, false
 	}
 	for {
@@ -377,12 +374,10 @@ func (c *Cache) Do(f func(key, value interface{}) bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.list.Do(func(key interface{}) bool {
-		r, ok := c.records.Load(key)
-		if !ok {
-			panic("evcache: invalid map state")
+		if r, ok := c.records.Load(key); ok {
+			return f(key, r.(*record).value)
 		}
-		value := r.(*record).value
-		return f(key, value)
+		panic("evcache: invalid cache state")
 	})
 }
 
@@ -413,9 +408,11 @@ func (c *Cache) deleteLocked(key interface{}, target *interface{}) (value interf
 	// while holding c.mu.
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	value = r.value
-	if target != nil && !reflect.DeepEqual(value, *target) {
+	if target != nil && !reflect.DeepEqual(r.value, *target) {
 		return nil, false
+	}
+	if k := c.list.Remove(r.ring); k != nil && k != key {
+		panic("evcache: invalid cache state")
 	}
 	switch c.mode {
 	case ModeNonBlocking:
@@ -424,26 +421,24 @@ func (c *Cache) deleteLocked(key interface{}, target *interface{}) (value interf
 	case ModeBlocking:
 		// In blocking mode, new writers load and wait for the old record.
 		r.evictionWg.Add(1)
-		r.setState(evicting)
 	}
-	if k := c.list.Remove(r.ring); k != nil && k != key {
-		panic("evcache: invalid ring")
+	r.setState(evicting)
+	value = r.value
+	if c.mode == ModeBlocking || c.afterEvict != nil {
+		c.wg.Add(1)
+		go func() {
+			defer c.wg.Done()
+			if c.mode == ModeBlocking {
+				// Finish the eviction.
+				defer r.evictionWg.Done()
+				defer c.records.Delete(key)
+			}
+			r.readerWg.Wait()
+			if c.afterEvict != nil {
+				c.afterEvict(key, value)
+			}
+		}()
 	}
-	if c.mode == ModeNonBlocking && c.afterEvict == nil {
-		return value, true
-	}
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
-		if c.mode == ModeBlocking {
-			defer r.evictionWg.Done()
-			defer c.records.Delete(key)
-		}
-		r.readerWg.Wait()
-		if c.afterEvict != nil {
-			c.afterEvict(key, value)
-		}
-	}()
 	return value, true
 }
 
@@ -470,7 +465,6 @@ func (c *Cache) processRecords(now int64) {
 	c.records.Range(func(key, value interface{}) bool {
 		r := value.(*record)
 		if r.State() != active {
-			// Record is being fetched or eviction callback running.
 			return true
 		}
 		if deadline := r.Deadline(); deadline > 0 && deadline < now {
