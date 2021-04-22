@@ -412,7 +412,7 @@ func (c *Cache) deleteLocked(key interface{}, target *interface{}) (value interf
 		return nil, false
 	}
 	if k := c.list.Remove(r.ring); k != nil && k != key {
-		panic("evcache: invalid ring")
+		panic("evcache: invalid cache state")
 	}
 	switch c.mode {
 	case ModeNonBlocking:
