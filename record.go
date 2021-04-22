@@ -20,24 +20,24 @@ type record struct {
 	evictionWg sync.WaitGroup
 	ring       *ring.Ring
 
-	value   interface{}
-	expires int64
-	hits    uint32
-	state   uint32
+	value    interface{}
+	deadline int64
+	hits     uint32
+	state    uint32
 }
 
 func newRecord() *record {
 	return &record{ring: ring.New(1)}
 }
 
-func (r *record) Init(value interface{}, ttl time.Duration) {
+func (r *record) init(value interface{}, ttl time.Duration) {
 	r.value = value
 	if ttl > 0 {
-		atomic.StoreInt64(&r.expires, time.Now().Add(ttl).UnixNano())
+		atomic.StoreInt64(&r.deadline, time.Now().Add(ttl).UnixNano())
 	}
 }
 
-func (r *record) SetState(newState uint32) {
+func (r *record) setState(newState uint32) {
 	prevState := (newState + 3 - 1) % 3
 	if !atomic.CompareAndSwapUint32(&r.state, prevState, newState) {
 		panic("evcache: invalid record state")
@@ -48,9 +48,8 @@ func (r *record) State() uint32 {
 	return atomic.LoadUint32(&r.state)
 }
 
-func (r *record) Expired(now int64) bool {
-	expires := atomic.LoadInt64(&r.expires)
-	return expires > 0 && expires < now
+func (r *record) Deadline() int64 {
+	return atomic.LoadInt64(&r.deadline)
 }
 
 func (r *record) TryLoad() (interface{}, bool) {
