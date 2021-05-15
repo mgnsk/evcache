@@ -224,7 +224,7 @@ func (c *Cache) Evict(key interface{}) (value interface{}, ok bool) {
 // under concurrent use.
 //
 // This method is safe only if value is unique. If this is not the case,
-// such as when values are pooled then the user must make sure that this
+// such as when values are pooled, then the user must make sure that this
 // method returns before putting the value back into the pool in the presence
 // of concurrent writers for key where the new value originates from the pool.
 //
@@ -401,19 +401,15 @@ func (c *Cache) deleteLocked(key interface{}, target *interface{}) (value interf
 		return nil, false
 	}
 	r := rec.(*record)
-	if r.State() != active {
+	if r.State() != active || target != nil && !reflect.DeepEqual(r.value, *target) {
 		return nil, false
 	}
+	value = r.value
 	// Safe to lock r.mu on an active record
 	// while holding c.mu.
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if target != nil && !reflect.DeepEqual(r.value, *target) {
-		return nil, false
-	}
-	if k := c.list.Remove(r.ring); k != nil && k != key {
-		panic("evcache: invalid cache state")
-	}
+	c.list.Remove(r.ring)
 	switch c.mode {
 	case ModeNonBlocking:
 		// In non-blocking mode, new writers see an empty map immediately.
@@ -423,7 +419,6 @@ func (c *Cache) deleteLocked(key interface{}, target *interface{}) (value interf
 		r.evictionWg.Add(1)
 	}
 	r.setState(evicting)
-	value = r.value
 	if c.mode == ModeBlocking || c.afterEvict != nil {
 		c.wg.Add(1)
 		go func() {
