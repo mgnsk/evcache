@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1619107709869,
+  "lastUpdate": 1622735857716,
   "repoUrl": "https://github.com/mgnsk/evcache",
   "entries": {
     "Benchmark": [
@@ -1344,6 +1344,78 @@ window.BENCHMARK_DATA = {
             "value": 506.7,
             "unit": "ns/op\t      16 B/op\t       1 allocs/op",
             "extra": "2475934 times\n2 procs"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "magnus@kokk.eu",
+            "name": "Magnus Kokk",
+            "username": "mgnsk"
+          },
+          "committer": {
+            "email": "magnus@kokk.eu",
+            "name": "Magnus Kokk",
+            "username": "mgnsk"
+          },
+          "distinct": true,
+          "id": "1da48956407fab6f452843bb5e4aefff5ccd18a9",
+          "message": "Retrigger workflow, the file is not broken",
+          "timestamp": "2021-06-03T18:51:40+03:00",
+          "tree_id": "2f565b6098f4290ae37d2aafbdaf6adb6721365a",
+          "url": "https://github.com/mgnsk/evcache/commit/1da48956407fab6f452843bb5e4aefff5ccd18a9"
+        },
+        "date": 1622735856680,
+        "tool": "go",
+        "benches": [
+          {
+            "name": "BenchmarkCapacityParallel",
+            "value": 1196,
+            "unit": "ns/op\t     227 B/op\t       6 allocs/op",
+            "extra": "890185 times\n2 procs"
+          },
+          {
+            "name": "BenchmarkFetchAndEvictParallel",
+            "value": 316.7,
+            "unit": "ns/op\t      75 B/op\t       1 allocs/op",
+            "extra": "3392161 times\n2 procs"
+          },
+          {
+            "name": "BenchmarkGet",
+            "value": 295,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "4357963 times\n2 procs"
+          },
+          {
+            "name": "BenchmarkSetNotExists",
+            "value": 1578,
+            "unit": "ns/op\t     283 B/op\t       5 allocs/op",
+            "extra": "1000000 times\n2 procs"
+          },
+          {
+            "name": "BenchmarkSetExists",
+            "value": 801.1,
+            "unit": "ns/op\t     152 B/op\t       4 allocs/op",
+            "extra": "1475721 times\n2 procs"
+          },
+          {
+            "name": "BenchmarkFetchExists",
+            "value": 430.1,
+            "unit": "ns/op\t       7 B/op\t       0 allocs/op",
+            "extra": "2771821 times\n2 procs"
+          },
+          {
+            "name": "BenchmarkFetchNotExists",
+            "value": 1564,
+            "unit": "ns/op\t     283 B/op\t       5 allocs/op",
+            "extra": "1000000 times\n2 procs"
+          },
+          {
+            "name": "BenchmarkPop",
+            "value": 532.3,
+            "unit": "ns/op\t       8 B/op\t       1 allocs/op",
+            "extra": "2634652 times\n2 procs"
           }
         ]
       }
