@@ -43,7 +43,6 @@ jobs:
           path: ./cache
           key: ${{ runner.os }}-benchmark
 
-      # Run `github-action-benchmark` action
       - name: Store benchmark result
         uses: rhysd/github-action-benchmark@v1
         with:
