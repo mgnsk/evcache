@@ -5,6 +5,8 @@
 
 [Benchmarks](https://mgnsk.github.io/evcache/dev/bench)
 
+`import "github.com/mgnsk/evcache/v2"`
+
 ## How it works
 
 The cache is a wrapper for `sync.Map` with transactions, autoexpiry, capacity limit and record ordering.

@@ -52,18 +52,6 @@ func (r *record) Deadline() int64 {
 	return atomic.LoadInt64(&r.deadline)
 }
 
-func (r *record) TryLoad() (interface{}, bool) {
-	if r.State() != active {
-		return nil, false
-	}
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	if r.State() != active {
-		return nil, false
-	}
-	return r.value, true
-}
-
 func (r *record) LoadAndHit() (interface{}, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

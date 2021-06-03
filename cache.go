@@ -24,7 +24,7 @@ type FetchCallback func() (interface{}, error)
 
 // EvictionCallback is guaranteed to run in a new goroutine when a cache record is evicted.
 //
-// It runs after all transactions for key have finished.
+// It runs after all transactions for key have finished regardless of eviction mode.
 type EvictionCallback func(key, value interface{})
 
 // EvictionMode specifies how transactions and eviction callback behave.
@@ -142,8 +142,8 @@ func (c *Cache) Exists(key interface{}) bool {
 	return ok && r.(*record).State() == active
 }
 
-// Get returns the value stored in the cache for a key. The boolean indicates
-// whether a value was found.
+// Get returns the value stored in the cache for a key and begins a transaction.
+// The boolean indicates whether a value was found.
 //
 // When the returned value is not used anymore, the caller MUST call closer.Close()
 // or a memory leak will occur.
@@ -151,9 +151,8 @@ func (c *Cache) Exists(key interface{}) bool {
 // Get is a non-blocking operation.
 func (c *Cache) Get(key interface{}) (value interface{}, closer io.Closer, exists bool) {
 	if r, ok := c.records.Load(key); ok && r.(*record).State() == active {
-		r := r.(*record)
-		if value, ok = r.LoadAndHit(); ok {
-			return value, r, true
+		if value, ok = r.(*record).LoadAndHit(); ok {
+			return value, r.(io.Closer), true
 		}
 	}
 	return nil, nil, false
@@ -170,8 +169,8 @@ func (c *Cache) Get(key interface{}) (value interface{}, closer io.Closer, exist
 // Range is a non-blocking operation.
 func (c *Cache) Range(f func(key, value interface{}) bool) {
 	c.records.Range(func(key, r interface{}) bool {
-		if v, ok := r.(*record).TryLoad(); ok {
-			return f(key, v)
+		if r := r.(*record); r.State() == active {
+			return f(key, r.value)
 		}
 		return true
 	})
