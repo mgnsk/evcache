@@ -37,11 +37,9 @@ func (r *record) init(value interface{}, ttl time.Duration) {
 	}
 }
 
-func (r *record) setState(newState uint32) {
+func (r *record) setState(newState uint32) bool {
 	prevState := (newState + 3 - 1) % 3
-	if !atomic.CompareAndSwapUint32(&r.state, prevState, newState) {
-		panic("evcache: invalid record state")
-	}
+	return atomic.CompareAndSwapUint32(&r.state, prevState, newState)
 }
 
 func (r *record) State() uint32 {
