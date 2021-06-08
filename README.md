@@ -49,7 +49,7 @@ To safely evict records in the non-blocking mode see the documentation on `Cache
 
 In `ModeBlocking` mode, an active transaction and eviction callback prevent a key from being concurrently overwritten.
 
-The swap is noticeable to users since all calls to `Fetch` and `Set` for that key will block until the transactions
+The swap is noticeable to users since calls to `Fetch` (only when it stores) and `Set` for that key will block until the transactions
 and callback finish.
 
 It is guaranteed that while holding an active transaction, a concurrent call to `Cache.Evict` for that key returns the exact
