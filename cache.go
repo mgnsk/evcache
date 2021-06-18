@@ -407,9 +407,7 @@ func (c *Cache) evictLocked(key interface{}, target *interface{}) (r *record, ok
 		// Add before setState to allow waiters to use an unlocked record.
 		r.evictionWg.Add(1)
 	}
-	if !r.setState(evicting) {
-		panic("evcache: invalid record state")
-	}
+	r.setState(evicting)
 	if c.mode == ModeBlocking || c.afterEvict != nil {
 		c.wg.Add(1)
 		go func() {

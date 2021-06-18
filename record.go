@@ -37,9 +37,8 @@ func (r *record) init(value interface{}, ttl time.Duration) {
 	}
 }
 
-func (r *record) setState(newState uint32) bool {
-	prevState := (newState + 3 - 1) % 3
-	return atomic.CompareAndSwapUint32(&r.state, prevState, newState)
+func (r *record) setState(s uint32) {
+	atomic.StoreUint32(&r.state, s)
 }
 
 func (r *record) State() uint32 {
