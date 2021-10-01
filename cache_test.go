@@ -414,9 +414,9 @@ var _ = Describe("compare and evict", func() {
 			// If we load a value, use it and then encounter an error
 			// we might want to evict the value.
 			//
-			// It we would call c.Evict("key") we might mistakenly evict
+			// If we would call c.Evict("key") we might mistakenly evict
 			// a new value if key had concurrently changed after loading
-			// the value. CompareAndEvict works correctly only with unique keys.
+			// the value. CompareAndEvict works correctly only with unique values.
 			ok := c.CompareAndEvict("key", "old value")
 			Expect(ok).To(BeFalse())
 			Expect(c.Exists("key")).To(BeTrue())
