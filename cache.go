@@ -292,7 +292,8 @@ func (c *Cache) Set(key, value interface{}, ttl time.Duration) {
 		if !loaded {
 			c.mu.Lock()
 			defer c.mu.Unlock()
-			front = c.list.PushBack(key, new.ring)
+			new.ring.Value = key
+			front = c.list.PushBack(new.ring)
 			new.init(value, ttl)
 			new.setState(active)
 			if ttl > 0 {
@@ -345,7 +346,8 @@ func (c *Cache) Fetch(key interface{}, ttl time.Duration, f FetchCallback) (valu
 		}
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		front = c.list.PushBack(key, new.ring)
+		new.ring.Value = key
+		front = c.list.PushBack(new.ring)
 		new.readerWg.Add(1)
 		new.init(value, ttl)
 		new.setState(active)

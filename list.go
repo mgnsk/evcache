@@ -25,10 +25,9 @@ func (l *ringList) Len() int {
 	return int(atomic.LoadUint32(&l.size))
 }
 
-// PushBack inserts a value at the back of list. If capacity is exceeded,
+// PushBack inserts an element at the back of list. If capacity is exceeded,
 // an element from the front of list is removed and its value returned.
-func (l *ringList) PushBack(value interface{}, r *ring.Ring) (front interface{}) {
-	r.Value = value
+func (l *ringList) PushBack(r *ring.Ring) (front interface{}) {
 	if l.back != nil {
 		l.back.Link(r)
 	}
@@ -36,7 +35,7 @@ func (l *ringList) PushBack(value interface{}, r *ring.Ring) (front interface{})
 	size := atomic.LoadUint32(&l.size)
 	if l.capacity > 0 && size+1 > l.capacity {
 		front = l.unlink(l.back.Next())
-		if front == value {
+		if front == r.Value {
 			panic("evcache: front cannot be value")
 		}
 		return front
