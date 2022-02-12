@@ -1,4 +1,4 @@
 /*
-Package evcache provides an in-memory ordered cache with optional eventually consistent LFU ordering.
+Package evcache provides a sync.Map wrapper with specific concurrency guarantees.
 */
 package evcache
