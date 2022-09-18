@@ -44,7 +44,7 @@ func TestFetchCallbackBlocks(t *testing.T) {
 	defer close(done)
 
 	go func() {
-		c.Fetch("key", 0, func() (string, error) {
+		_, _ = c.Fetch("key", 0, func() (string, error) {
 			close(fetchStarted)
 			<-done
 			return "", nil
@@ -117,7 +117,7 @@ func TestConcurrentFetch(t *testing.T) {
 		fetchStarted := make(chan struct{})
 
 		go func() {
-			c.Fetch("key", 0, func() (string, error) {
+			_, _ = c.Fetch("key", 0, func() (string, error) {
 				close(fetchStarted)
 				return "", <-errCh
 			})
@@ -143,7 +143,7 @@ func TestConcurrentFetch(t *testing.T) {
 		fetchStarted := make(chan struct{})
 
 		go func() {
-			c.Fetch("key", 0, func() (string, error) {
+			_, _ = c.Fetch("key", 0, func() (string, error) {
 				close(fetchStarted)
 				return <-valueCh, nil
 			})
@@ -240,7 +240,7 @@ func BenchmarkFetchAndEvictParallel(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			if idx := atomic.AddUint64(&index, 1); idx%2 == 0 {
-				c.Fetch(0, 0, func() (int, error) {
+				_, _ = c.Fetch(0, 0, func() (int, error) {
 					if idx%4 == 0 {
 						return 0, errFetch
 					}
@@ -260,7 +260,7 @@ func BenchmarkFetchExists(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		c.Fetch(0, 0, func() (int, error) {
+		_, _ = c.Fetch(0, 0, func() (int, error) {
 			panic("unexpected fetch callback")
 		})
 	}
@@ -272,7 +272,7 @@ func BenchmarkFetchNotExists(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		c.Fetch(i, 0, func() (int, error) {
+		_, _ = c.Fetch(i, 0, func() (int, error) {
 			return 0, nil
 		})
 	}
