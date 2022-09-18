@@ -10,11 +10,11 @@ type backend[K comparable, V any] struct {
 	timer *time.Timer
 	done  chan struct{}
 	sync.Map
-	earliestGCAt int64
-	cap          int
-	len          int
-	once         sync.Once
-	mu           sync.Mutex
+	earliestExpireAt int64
+	cap              int
+	len              int
+	once             sync.Once
+	mu               sync.Mutex
 }
 
 func newBackend[K comparable, V any](capacity int) *backend[K, V] {
@@ -60,7 +60,7 @@ func (b *backend[K, V]) PushBack(r *record[V], ttl time.Duration) {
 
 	if n := b.overflow(); n > 0 {
 		b.runOnce()
-		b.resetTimer(0, 0)
+		b.timer.Reset(0)
 	} else if r.deadline > 0 {
 		b.runOnce()
 		b.resetTimer(r.deadline, r.deadline-ttl.Nanoseconds())
@@ -87,10 +87,8 @@ func (b *backend[K, V]) runOnce() {
 }
 
 func (b *backend[K, V]) resetTimer(deadline, now int64) {
-	if deadline == 0 || deadline < now {
-		b.timer.Reset(0)
-	} else if b.earliestGCAt == 0 || deadline < b.earliestGCAt {
-		b.earliestGCAt = deadline
+	if b.earliestExpireAt == 0 || deadline < b.earliestExpireAt {
+		b.earliestExpireAt = deadline
 		b.timer.Reset(time.Duration(deadline - now))
 	}
 }
@@ -118,9 +116,7 @@ func (b *backend[K, V]) runGC(now int64) {
 				b.doEvict(key.(K))
 			}
 
-			if earliest == 0 && r.deadline > 0 {
-				earliest = r.deadline
-			} else if r.deadline < earliest {
+			if r.deadline > 0 && (earliest == 0 || r.deadline < earliest) {
 				earliest = r.deadline
 			}
 		}
