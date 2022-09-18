@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1663491039160,
+  "lastUpdate": 1663492692845,
   "repoUrl": "https://github.com/mgnsk/evcache",
   "entries": {
     "Benchmark": [
@@ -1884,6 +1884,44 @@ window.BENCHMARK_DATA = {
           {
             "name": "BenchmarkFetchNotExists",
             "value": 1402,
+            "unit": "ns/op\t     219 B/op\t       4 allocs/op",
+            "extra": "1000000 times\n2 procs"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "mgnsk",
+            "username": "mgnsk"
+          },
+          "committer": {
+            "name": "mgnsk",
+            "username": "mgnsk"
+          },
+          "id": "ea106b8f7aa2bc908476d161f7d09c6773b15f6e",
+          "message": "`v3`: Refactor and keep only essential features",
+          "timestamp": "2021-10-01T20:52:02Z",
+          "url": "https://github.com/mgnsk/evcache/pull/34/commits/ea106b8f7aa2bc908476d161f7d09c6773b15f6e"
+        },
+        "date": 1663492691214,
+        "tool": "go",
+        "benches": [
+          {
+            "name": "BenchmarkFetchAndEvictParallel",
+            "value": 158.1,
+            "unit": "ns/op\t      25 B/op\t       0 allocs/op",
+            "extra": "6965113 times\n2 procs"
+          },
+          {
+            "name": "BenchmarkFetchExists",
+            "value": 73.02,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "15780279 times\n2 procs"
+          },
+          {
+            "name": "BenchmarkFetchNotExists",
+            "value": 1242,
             "unit": "ns/op\t     219 B/op\t       4 allocs/op",
             "extra": "1000000 times\n2 procs"
           }
