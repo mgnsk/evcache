@@ -1,66 +1,36 @@
 package evcache
 
 import (
-	"container/ring"
 	"sync"
 	"sync/atomic"
-	"time"
 )
 
-const (
-	// The default state represents a record being fetched.
-	_ uint32 = iota
-	active
-	evicting
-)
-
-type record struct {
-	mu         sync.RWMutex
-	readerWg   sync.WaitGroup
-	evictionWg sync.WaitGroup
-	ring       *ring.Ring
-
-	value    interface{}
-	deadline int64
-	hits     uint32
-	state    uint32
+type record[V any] struct {
+	value       V
+	next, prev  *record[V]
+	deadline    int64
+	wg          sync.WaitGroup
+	initialized atomic.Bool
 }
 
-func newRecord() *record {
-	return &record{ring: ring.New(1)}
+func newRecord[V any]() *record[V] {
+	r := &record[V]{}
+	r.next = r
+	r.prev = r
+	return r
 }
 
-func (r *record) init(value interface{}, ttl time.Duration) {
-	r.value = value
-	if ttl > 0 {
-		atomic.StoreInt64(&r.deadline, time.Now().Add(ttl).UnixNano())
-	}
+func (r *record[V]) Link(s *record[V]) {
+	n := r.next
+	r.next = s
+	s.prev = r
+	n.prev = s
+	s.next = n
 }
 
-func (r *record) setState(s uint32) {
-	atomic.StoreUint32(&r.state, s)
-}
-
-func (r *record) State() uint32 {
-	return atomic.LoadUint32(&r.state)
-}
-
-func (r *record) Deadline() int64 {
-	return atomic.LoadInt64(&r.deadline)
-}
-
-func (r *record) LoadAndHit() (interface{}, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	if r.State() != active {
-		return nil, false
-	}
-	atomic.AddUint32(&r.hits, 1)
-	r.readerWg.Add(1)
-	return r.value, true
-}
-
-func (r *record) Close() error {
-	r.readerWg.Done()
-	return nil
+func (r *record[V]) Unlink() {
+	r.prev.next = r.next
+	r.next.prev = r.prev
+	r.next = r
+	r.prev = r
 }
