@@ -3,8 +3,6 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/mgnsk/evcache/v3.svg)](https://pkg.go.dev/github.com/mgnsk/evcache/v3)
 [![Go Report Card](https://goreportcard.com/badge/github.com/mgnsk/evcache)](https://goreportcard.com/report/github.com/mgnsk/evcache)
 
-[Benchmarks](https://mgnsk.github.io/evcache/dev/bench)
-
 `import "github.com/mgnsk/evcache/v3"`
 
 Package evcache implements a key-value cache with capacity overflow eviction, item expiry and deduplication.
