@@ -187,6 +187,21 @@ func TestOverflow(t *testing.T) {
 	g.Eventually(c.Len).Should(Equal(capacity))
 }
 
+func TestExpire(t *testing.T) {
+	g := NewWithT(t)
+
+	c := evcache.New[int, int](0)
+
+	n := 10
+	for i := 0; i < n; i++ {
+		// Store records in reverse TTL order.
+		d := time.Duration(n-i) * time.Millisecond
+		_, _ = c.LoadOrStore(i, d, 0)
+	}
+
+	g.Eventually(c.Len).Should(BeZero())
+}
+
 func TestOverflowEvictionOrdering(t *testing.T) {
 	g := NewWithT(t)
 

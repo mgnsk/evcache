@@ -128,7 +128,6 @@ loadOrStore:
 	}
 
 	c.backend.PushBack(new, ttl)
-	new.initialized.Store(true)
 
 	return value, nil
 }

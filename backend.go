@@ -44,7 +44,16 @@ func (b *backend[K, V]) Evict(key K) (*record[V], bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	return b.doEvict(key)
+	if rec, ok := b.Load(key); ok {
+		if r := rec.(*record[V]); r.initialized.Load() {
+			b.Delete(key)
+			b.unlink(r)
+
+			return r, true
+		}
+	}
+
+	return nil, false
 }
 
 func (b *backend[K, V]) PushBack(r *record[V], ttl time.Duration) {
@@ -57,13 +66,17 @@ func (b *backend[K, V]) PushBack(r *record[V], ttl time.Duration) {
 
 	b.tail = r
 	b.len++
+	r.initialized.Store(true)
 
 	if n := b.overflow(); n > 0 {
 		b.runOnce()
 		b.timer.Reset(0)
 	} else if r.deadline > 0 {
 		b.runOnce()
-		b.resetTimer(r.deadline, r.deadline-ttl.Nanoseconds())
+		if b.earliestExpireAt == 0 || r.deadline < b.earliestExpireAt {
+			b.earliestExpireAt = r.deadline
+			b.timer.Reset(ttl)
+		}
 	}
 }
 
@@ -86,13 +99,6 @@ func (b *backend[K, V]) runOnce() {
 	})
 }
 
-func (b *backend[K, V]) resetTimer(deadline, now int64) {
-	if b.earliestExpireAt == 0 || deadline < b.earliestExpireAt {
-		b.earliestExpireAt = deadline
-		b.timer.Reset(time.Duration(deadline - now))
-	}
-}
-
 func (b *backend[K, V]) runGC(now int64) {
 	var overflowed map[*record[V]]bool
 
@@ -113,10 +119,9 @@ func (b *backend[K, V]) runGC(now int64) {
 	b.Range(func(key, value any) bool {
 		if r := value.(*record[V]); r.initialized.Load() {
 			if b.cap > 0 && overflowed[r] || r.deadline > 0 && r.deadline < now {
-				b.doEvict(key.(K))
-			}
-
-			if r.deadline > 0 && (earliest == 0 || r.deadline < earliest) {
+				b.Delete(key.(K))
+				b.unlink(r)
+			} else if r.deadline > 0 && (earliest == 0 || r.deadline < earliest) {
 				earliest = r.deadline
 			}
 		}
@@ -125,8 +130,8 @@ func (b *backend[K, V]) runGC(now int64) {
 	})
 
 	if earliest > 0 {
-		// Reset the timer only when there is a known TTL record.
-		b.resetTimer(earliest, now)
+		b.earliestExpireAt = earliest
+		b.timer.Reset(time.Duration(earliest - now))
 	}
 }
 
@@ -137,25 +142,15 @@ func (b *backend[K, V]) overflow() int {
 	return 0
 }
 
-func (b *backend[K, V]) doEvict(key K) (*record[V], bool) {
-	if rec, ok := b.Load(key); ok {
-		if r := rec.(*record[V]); r.initialized.Load() {
-			b.Delete(key)
-
-			if r == b.tail {
-				if b.len == 1 {
-					b.tail = nil
-				} else {
-					b.tail = r.prev
-				}
-			}
-
-			r.Unlink()
-			b.len--
-
-			return r, true
+func (b *backend[K, V]) unlink(r *record[V]) {
+	if r == b.tail {
+		if b.len == 1 {
+			b.tail = nil
+		} else {
+			b.tail = r.prev
 		}
 	}
 
-	return nil, false
+	r.Unlink()
+	b.len--
 }
