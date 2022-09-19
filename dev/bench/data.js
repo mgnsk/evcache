@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1663577839935,
+  "lastUpdate": 1663577917232,
   "repoUrl": "https://github.com/mgnsk/evcache",
   "entries": {
     "Benchmark": [
@@ -2002,6 +2002,48 @@ window.BENCHMARK_DATA = {
           {
             "name": "BenchmarkFetchNotExists",
             "value": 1061,
+            "unit": "ns/op\t     219 B/op\t       4 allocs/op",
+            "extra": "1000000 times\n2 procs"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "magnus@kokk.eu",
+            "name": "Magnus Kokk",
+            "username": "mgnsk"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f49468939a81d8b02e52fe900b3d81ba2165eb6c",
+          "message": "Update README.md",
+          "timestamp": "2022-09-19T11:58:06+03:00",
+          "tree_id": "2af39629ef4937c87e710c6df5464a864313db17",
+          "url": "https://github.com/mgnsk/evcache/commit/f49468939a81d8b02e52fe900b3d81ba2165eb6c"
+        },
+        "date": 1663577916419,
+        "tool": "go",
+        "benches": [
+          {
+            "name": "BenchmarkFetchAndEvictParallel",
+            "value": 196.6,
+            "unit": "ns/op\t      37 B/op\t       0 allocs/op",
+            "extra": "6108918 times\n2 procs"
+          },
+          {
+            "name": "BenchmarkFetchExists",
+            "value": 78.62,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "15267760 times\n2 procs"
+          },
+          {
+            "name": "BenchmarkFetchNotExists",
+            "value": 1377,
             "unit": "ns/op\t     219 B/op\t       4 allocs/op",
             "extra": "1000000 times\n2 procs"
           }
