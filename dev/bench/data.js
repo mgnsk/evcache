@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1663577515344,
+  "lastUpdate": 1663577839935,
   "repoUrl": "https://github.com/mgnsk/evcache",
   "entries": {
     "Benchmark": [
@@ -1960,6 +1960,48 @@ window.BENCHMARK_DATA = {
           {
             "name": "BenchmarkFetchNotExists",
             "value": 1092,
+            "unit": "ns/op\t     219 B/op\t       4 allocs/op",
+            "extra": "1000000 times\n2 procs"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "magnus@kokk.eu",
+            "name": "Magnus Kokk",
+            "username": "mgnsk"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "73e1bff86a4da0f17b8fffd01e19c97db6e4812d",
+          "message": "Merge pull request #34 from mgnsk/v3-devel\n\n`v3`: Refactor and keep only essential features",
+          "timestamp": "2022-09-19T11:56:42+03:00",
+          "tree_id": "ff79bd5f46c54382b103d45d7685afd438443a31",
+          "url": "https://github.com/mgnsk/evcache/commit/73e1bff86a4da0f17b8fffd01e19c97db6e4812d"
+        },
+        "date": 1663577839128,
+        "tool": "go",
+        "benches": [
+          {
+            "name": "BenchmarkFetchAndEvictParallel",
+            "value": 144.6,
+            "unit": "ns/op\t      30 B/op\t       0 allocs/op",
+            "extra": "8089942 times\n2 procs"
+          },
+          {
+            "name": "BenchmarkFetchExists",
+            "value": 59.37,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "18685687 times\n2 procs"
+          },
+          {
+            "name": "BenchmarkFetchNotExists",
+            "value": 1061,
             "unit": "ns/op\t     219 B/op\t       4 allocs/op",
             "extra": "1000000 times\n2 procs"
           }
