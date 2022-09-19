@@ -12,7 +12,7 @@ Package evcache implements a key-value cache with capacity overflow eviction, it
 ### Example
 
 ```go
-c := evcache.NewWithCapacity[string, string](10)
+c := evcache.New[string, string](10)
 
 // Fetches an existing value or calls the callback to get a new value.
 result, err := c.Fetch("key", time.Minute, func() (string, error) {
