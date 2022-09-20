@@ -129,8 +129,8 @@ func (b *backend[K, V]) runGC(now int64) {
 		return true
 	})
 
+	b.earliestExpireAt = earliest
 	if earliest > 0 {
-		b.earliestExpireAt = earliest
 		b.timer.Reset(time.Duration(earliest - now))
 	}
 }

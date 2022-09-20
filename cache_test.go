@@ -202,6 +202,39 @@ func TestExpire(t *testing.T) {
 	g.Eventually(c.Len).Should(BeZero())
 }
 
+func TestExpireEdgeCase(t *testing.T) {
+	g := NewWithT(t)
+
+	c := evcache.New[int, *string](0)
+
+	v1Expired := make(chan struct{})
+	v1 := new(string)
+	runtime.SetFinalizer(v1, func(any) {
+		close(v1Expired)
+	})
+
+	c.LoadOrStore(0, 10*time.Millisecond, v1)
+
+	// Wait until v1 expires.
+	g.Eventually(func() bool {
+		runtime.GC()
+		select {
+		case <-v1Expired:
+			return true
+		default:
+			return false
+		}
+	}).Should(BeTrue())
+
+	// Assert that after v1 expires, v2 can expire,
+	// specifically that runGC() resets earliestExpireAt to zero,
+	// so that LoadOrStore schedules the GC loop.
+	v2 := new(string)
+	c.LoadOrStore(1, time.Second, v2)
+
+	g.Eventually(c.Len, 2*time.Second).Should(BeZero())
+}
+
 func TestOverflowEvictionOrdering(t *testing.T) {
 	g := NewWithT(t)
 
