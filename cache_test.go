@@ -194,7 +194,7 @@ func TestExpire(t *testing.T) {
 
 	n := 10
 	for i := 0; i < n; i++ {
-		// Store records in reverse TTL order.
+		// Store records in descending TTL order.
 		d := time.Duration(n-i) * time.Millisecond
 		_, _ = c.LoadOrStore(i, d, 0)
 	}
@@ -216,17 +216,9 @@ func TestExpireEdgeCase(t *testing.T) {
 	c.LoadOrStore(0, 10*time.Millisecond, v1)
 
 	// Wait until v1 expires.
-	g.Eventually(func() bool {
-		runtime.GC()
-		select {
-		case <-v1Expired:
-			return true
-		default:
-			return false
-		}
-	}).Should(BeTrue())
+	g.Eventually(c.Len).Should(BeZero())
 
-	// Assert that after v1 expires, v2 can expire,
+	// Assert that after v1 expires, v2 with a longer TTL than v1, can expire,
 	// specifically that runGC() resets earliestExpireAt to zero,
 	// so that LoadOrStore schedules the GC loop.
 	v2 := new(string)

@@ -69,10 +69,10 @@ func (b *backend[K, V]) PushBack(r *record[V], ttl time.Duration) {
 	r.initialized.Store(true)
 
 	if n := b.overflow(); n > 0 {
-		b.runOnce()
+		b.startGCOnce()
 		b.timer.Reset(0)
 	} else if r.deadline > 0 {
-		b.runOnce()
+		b.startGCOnce()
 		if b.earliestExpireAt == 0 || r.deadline < b.earliestExpireAt {
 			b.earliestExpireAt = r.deadline
 			b.timer.Reset(ttl)
@@ -80,7 +80,7 @@ func (b *backend[K, V]) PushBack(r *record[V], ttl time.Duration) {
 	}
 }
 
-func (b *backend[K, V]) runOnce() {
+func (b *backend[K, V]) startGCOnce() {
 	b.once.Do(func() {
 		go func() {
 			for {
@@ -88,11 +88,9 @@ func (b *backend[K, V]) runOnce() {
 				case <-b.done:
 					return
 				case now := <-b.timer.C:
-					func() {
-						b.mu.Lock()
-						defer b.mu.Unlock()
-						b.runGC(now.UnixNano())
-					}()
+					b.mu.Lock()
+					b.runGC(now.UnixNano())
+					b.mu.Unlock()
 				}
 			}
 		}()
@@ -118,7 +116,7 @@ func (b *backend[K, V]) runGC(now int64) {
 
 	b.Range(func(key, value any) bool {
 		if r := value.(*record[V]); r.initialized.Load() {
-			if b.cap > 0 && overflowed[r] || r.deadline > 0 && r.deadline < now {
+			if len(overflowed) > 0 && overflowed[r] || r.deadline > 0 && r.deadline < now {
 				b.Delete(key.(K))
 				b.unlink(r)
 			} else if r.deadline > 0 && (earliest == 0 || r.deadline < earliest) {

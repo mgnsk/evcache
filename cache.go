@@ -118,6 +118,7 @@ loadOrStore:
 
 	if value, err = f(); err != nil {
 		c.backend.Delete(key)
+
 		var zero V
 		return zero, err
 	}
