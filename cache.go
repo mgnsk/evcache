@@ -29,16 +29,14 @@ func New[K comparable, V any](capacity int) *Cache[K, V] {
 
 // Exists returns whether a value in the cache exists for key.
 func (c *Cache[K, V]) Exists(key K) bool {
-	r, ok := c.backend.Load(key)
-	return ok && r.(*record[V]).initialized.Load()
+	r, ok := c.backend.xmap.Load(key)
+	return ok && r.initialized.Load()
 }
 
 // Get returns the value stored in the cache for key.
 func (c *Cache[K, V]) Get(key K) (value V, exists bool) {
-	if rec, ok := c.backend.Load(key); ok {
-		if r := rec.(*record[V]); r.initialized.Load() {
-			return r.value, true
-		}
+	if r, ok := c.backend.xmap.Load(key); ok && r.initialized.Load() {
+		return r.value, true
 	}
 
 	var zero V
@@ -50,9 +48,9 @@ func (c *Cache[K, V]) Get(key K) (value V, exists bool) {
 //
 // Range is allowed to modify the cache.
 func (c *Cache[K, V]) Range(f func(key K, value V) bool) {
-	c.backend.Range(func(key, r any) bool {
-		if r := r.(*record[V]); r.initialized.Load() {
-			return f(key.(K), r.value)
+	c.backend.xmap.Range(func(key K, r *record[V]) bool {
+		if r.initialized.Load() {
+			return f(key, r.value)
 		}
 		return true
 	})
@@ -99,8 +97,8 @@ func (c *Cache[K, V]) Fetch(key K, ttl time.Duration, f func() (V, error)) (valu
 	defer new.wg.Done()
 
 loadOrStore:
-	if old, loaded := c.backend.LoadOrStore(key, new); loaded {
-		switch r := old.(*record[V]); r.initialized.Load() {
+	if r, loaded := c.backend.xmap.LoadOrStore(key, new); loaded {
+		switch r.initialized.Load() {
 		case true:
 			c.pool.Put(new)
 			return r.value, nil
@@ -117,7 +115,7 @@ loadOrStore:
 	}
 
 	if value, err = f(); err != nil {
-		c.backend.Delete(key)
+		c.backend.xmap.Delete(key)
 
 		var zero V
 		return zero, err
