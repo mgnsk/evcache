@@ -1,10 +1,10 @@
 package evcache
 
 import (
-	"encoding/gob"
 	"hash/maphash"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/puzpuzpuz/xsync/v2"
 )
@@ -21,6 +21,15 @@ type backend[K comparable, V any] struct {
 	mu               sync.Mutex
 }
 
+//go:noescape
+//go:linkname memhash64 runtime.memhash64
+func memhash64(p unsafe.Pointer, h uintptr) uintptr
+
+func hashUint64(seed maphash.Seed, v uint64) uint64 {
+	nseed := *(*uint64)(unsafe.Pointer(&seed))
+	return uint64(memhash64(unsafe.Pointer(&v), uintptr(nseed)))
+}
+
 func newBackend[K comparable, V any](capacity int) *backend[K, V] {
 	t := time.NewTimer(0)
 	<-t.C
@@ -28,15 +37,8 @@ func newBackend[K comparable, V any](capacity int) *backend[K, V] {
 	return &backend[K, V]{
 		done: make(chan struct{}),
 		xmap: xsync.NewTypedMapOf[K, *record[V]](func(seed maphash.Seed, key K) uint64 {
-			var h maphash.Hash
-			h.SetSeed(seed)
-
-			enc := gob.NewEncoder(&h)
-			if err := enc.Encode(key); err != nil {
-				panic(err)
-			}
-
-			return h.Sum64()
+			nseed := *(*uint64)(unsafe.Pointer(&seed))
+			return uint64(memhash64(unsafe.Pointer(&key), uintptr(nseed)))
 		}),
 		timer: t,
 		cap:   capacity,
