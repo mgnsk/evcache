@@ -25,11 +25,6 @@ type backend[K comparable, V any] struct {
 //go:linkname memhash64 runtime.memhash64
 func memhash64(p unsafe.Pointer, h uintptr) uintptr
 
-func hashUint64(seed maphash.Seed, v uint64) uint64 {
-	nseed := *(*uint64)(unsafe.Pointer(&seed))
-	return uint64(memhash64(unsafe.Pointer(&v), uintptr(nseed)))
-}
-
 func newBackend[K comparable, V any](capacity int) *backend[K, V] {
 	t := time.NewTimer(0)
 	<-t.C
