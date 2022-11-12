@@ -88,7 +88,7 @@ func (c *Cache[K, V]) LoadOrStore(key K, ttl time.Duration, value V) (old V, loa
 
 // Fetch loads or stores a value for key. If a value exists, f will not be called,
 // otherwise f will be called to fetch the new value.
-// Concurrent Fetches for the same key will block each other.
+// Concurrent Fetches for the same key will block each other and return a single result.
 func (c *Cache[K, V]) Fetch(key K, ttl time.Duration, f func() (V, error)) (value V, err error) {
 	new, ok := c.pool.Get().(*record[V])
 	if !ok {
