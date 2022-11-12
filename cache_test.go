@@ -207,11 +207,7 @@ func TestExpireEdgeCase(t *testing.T) {
 
 	c := evcache.New[int, *string](0)
 
-	v1Expired := make(chan struct{})
 	v1 := new(string)
-	runtime.SetFinalizer(v1, func(any) {
-		close(v1Expired)
-	})
 
 	c.LoadOrStore(0, 10*time.Millisecond, v1)
 
