@@ -90,6 +90,14 @@ func (c *Cache[K, V]) LoadOrStore(key K, ttl time.Duration, value V) (old V, loa
 // otherwise f will be called to fetch the new value.
 // Concurrent Fetches for the same key will block each other and return a single result.
 func (c *Cache[K, V]) Fetch(key K, ttl time.Duration, f func() (V, error)) (value V, err error) {
+	return c.TryFetch(key, func() (V, time.Duration, error) {
+		value, err := f()
+		return value, ttl, err
+	})
+}
+
+// TryFetch is like Fetch but allows the TTL to be returned alongside the value from callback.
+func (c *Cache[K, V]) TryFetch(key K, f func() (V, time.Duration, error)) (value V, err error) {
 	new, ok := c.pool.Get().(*record[V])
 	if !ok {
 		new = newRecord[V]()
@@ -116,7 +124,8 @@ loadOrStore:
 		}
 	}
 
-	if value, err = f(); err != nil {
+	value, ttl, err := f()
+	if err != nil {
 		c.backend.Delete(key)
 
 		var zero V
