@@ -114,10 +114,10 @@ func TestFetchCallbackPanic(t *testing.T) {
 
 	func() {
 		defer func() {
-			recover()
+			_ = recover()
 		}()
 
-		c.Fetch("key", 0, func() (string, error) {
+		_, _ = c.Fetch("key", 0, func() (string, error) {
 			panic("failed")
 		})
 	}()
