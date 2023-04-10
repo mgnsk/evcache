@@ -124,6 +124,14 @@ loadOrStore:
 		}
 	}
 
+	defer func() {
+		if r := recover(); r != nil {
+			c.backend.Delete(key)
+
+			panic(r)
+		}
+	}()
+
 	value, ttl, err := f()
 	if err != nil {
 		c.backend.Delete(key)

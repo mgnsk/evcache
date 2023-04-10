@@ -107,6 +107,30 @@ func TestFetchCallbackBlocks(t *testing.T) {
 	})
 }
 
+func TestFetchCallbackPanic(t *testing.T) {
+	g := NewWithT(t)
+
+	c := evcache.New[string, string](0)
+
+	func() {
+		defer func() {
+			recover()
+		}()
+
+		c.Fetch("key", 0, func() (string, error) {
+			panic("failed")
+		})
+	}()
+
+	// Fetching again does not deadlock as the uninitialized value was cleaned up.
+	v, err := c.Fetch("key", 0, func() (string, error) {
+		return "new value", nil
+	})
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(v).To(Equal("new value"))
+}
+
 func TestConcurrentFetch(t *testing.T) {
 	t.Run("returns error", func(t *testing.T) {
 		g := NewWithT(t)
