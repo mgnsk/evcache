@@ -3,10 +3,16 @@ package evcache
 import (
 	"sync"
 	"time"
+
+	"github.com/mgnsk/evcache/v3/ringlist"
 )
 
+type recordList[V any] struct {
+	ringlist.List[record[V], *record[V]]
+}
+
 type backend[K comparable, V any] struct {
-	list  RingList[record[V], *record[V]]
+	list  recordList[V]
 	timer *time.Timer
 	done  chan struct{}
 	sync.Map
