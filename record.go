@@ -20,6 +20,14 @@ func newRecord[V any]() *record[V] {
 	return r
 }
 
+func (r *record[V]) Next() *record[V] {
+	return r.next
+}
+
+func (r *record[V]) Prev() *record[V] {
+	return r.prev
+}
+
 func (r *record[V]) Link(s *record[V]) {
 	n := r.next
 	r.next = s

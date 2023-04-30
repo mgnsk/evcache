@@ -6,13 +6,12 @@ import (
 )
 
 type backend[K comparable, V any] struct {
-	tail  *record[V]
+	list  RingList[record[V], *record[V]]
 	timer *time.Timer
 	done  chan struct{}
 	sync.Map
 	earliestExpireAt int64
 	cap              int
-	len              int
 	once             sync.Once
 	mu               sync.Mutex
 }
@@ -37,7 +36,7 @@ func (b *backend[K, V]) Len() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	return b.len
+	return b.list.Len()
 }
 
 func (b *backend[K, V]) Evict(key K) (*record[V], bool) {
@@ -47,7 +46,7 @@ func (b *backend[K, V]) Evict(key K) (*record[V], bool) {
 	if rec, ok := b.Load(key); ok {
 		if r := rec.(*record[V]); r.initialized.Load() {
 			b.Delete(key)
-			b.unlink(r)
+			b.list.Remove(r)
 
 			return r, true
 		}
@@ -60,12 +59,7 @@ func (b *backend[K, V]) PushBack(r *record[V], ttl time.Duration) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if b.tail != nil {
-		b.tail.Link(r)
-	}
-
-	b.tail = r
-	b.len++
+	b.list.PushBack(r)
 	r.initialized.Store(true)
 
 	if n := b.overflow(); n > 0 {
@@ -103,11 +97,11 @@ func (b *backend[K, V]) runGC(now int64) {
 	if n := b.overflow(); n > 0 {
 		overflowed = make(map[*record[V]]bool, n)
 
-		r := b.tail.next // front element
+		r := b.list.Front()
 		overflowed[r] = true
 
 		for i := 1; i < n; i++ {
-			r = r.next
+			r = r.Next()
 			overflowed[r] = true
 		}
 	}
@@ -118,7 +112,7 @@ func (b *backend[K, V]) runGC(now int64) {
 		if r := value.(*record[V]); r.initialized.Load() {
 			if len(overflowed) > 0 && overflowed[r] || r.deadline > 0 && r.deadline < now {
 				b.Delete(key.(K))
-				b.unlink(r)
+				b.list.Remove(r)
 			} else if r.deadline > 0 && (earliest == 0 || r.deadline < earliest) {
 				earliest = r.deadline
 			}
@@ -134,21 +128,8 @@ func (b *backend[K, V]) runGC(now int64) {
 }
 
 func (b *backend[K, V]) overflow() int {
-	if b.cap > 0 && b.len > b.cap {
-		return b.len - b.cap
+	if b.cap > 0 && b.list.Len() > b.cap {
+		return b.list.Len() - b.cap
 	}
 	return 0
-}
-
-func (b *backend[K, V]) unlink(r *record[V]) {
-	if r == b.tail {
-		if b.len == 1 {
-			b.tail = nil
-		} else {
-			b.tail = r.prev
-		}
-	}
-
-	r.Unlink()
-	b.len--
 }
