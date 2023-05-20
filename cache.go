@@ -86,8 +86,17 @@ func (c *Cache[K, V]) LoadOrStore(key K, ttl time.Duration, value V) (old V, loa
 	return v, loaded
 }
 
+// MustFetch fetches a value without handling errors. It is safe to panic in f.
+func (c *Cache[K, V]) MustFetch(key K, ttl time.Duration, f func() V) (value V) {
+	v, _ := c.TryFetch(key, func() (V, time.Duration, error) {
+		value := f()
+		return value, ttl, nil
+	})
+	return v
+}
+
 // Fetch loads or stores a value for key. If a value exists, f will not be called,
-// otherwise f will be called to fetch the new value.
+// otherwise f will be called to fetch the new value. It is safe to panic in f.
 // Concurrent Fetches for the same key will block each other and return a single result.
 func (c *Cache[K, V]) Fetch(key K, ttl time.Duration, f func() (V, error)) (value V, err error) {
 	return c.TryFetch(key, func() (V, time.Duration, error) {
