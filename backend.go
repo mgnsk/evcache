@@ -86,6 +86,7 @@ func (b *backend[K, V]) startGCOnce() {
 			for {
 				select {
 				case <-b.done:
+					b.timer.Stop()
 					return
 				case now := <-b.timer.C:
 					b.mu.Lock()
