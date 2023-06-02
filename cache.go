@@ -117,20 +117,21 @@ func (c *Cache[K, V]) TryFetch(key K, f func() (V, time.Duration, error)) (value
 
 loadOrStore:
 	if old, loaded := c.backend.LoadOrStore(key, new); loaded {
-		switch r := old.(*record[V]); r.initialized.Load() {
-		case true:
+		r := old.(*record[V])
+
+		if r.initialized.Load() {
 			c.pool.Put(new)
 			return r.value, nil
-
-		case false:
-			r.wg.Wait()
-			if r.initialized.Load() {
-				c.pool.Put(new)
-				return r.value, nil
-			}
-
-			goto loadOrStore
 		}
+
+		r.wg.Wait()
+
+		if r.initialized.Load() {
+			c.pool.Put(new)
+			return r.value, nil
+		}
+
+		goto loadOrStore
 	}
 
 	defer func() {
