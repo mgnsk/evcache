@@ -7,15 +7,22 @@ import (
 	"github.com/mgnsk/evcache/v3/ringlist"
 )
 
+type storageMap[K comparable, V any] interface {
+	Load(key K) (value V, ok bool)
+	LoadOrStore(key K, value V) (actual V, loaded bool)
+	Delete(key K)
+	Range(f func(key K, value V) bool)
+}
+
 type recordList[V any] struct {
 	ringlist.List[record[V], *record[V]]
 }
 
 type backend[K comparable, V any] struct {
-	list  recordList[V]
-	timer *time.Timer
-	done  chan struct{}
-	sync.Map
+	timer            *time.Timer
+	done             chan struct{}
+	xmap             storageMap[K, *record[V]]
+	list             recordList[V]
 	earliestExpireAt int64
 	cap              int
 	once             sync.Once
@@ -27,8 +34,9 @@ func newBackend[K comparable, V any](capacity int) *backend[K, V] {
 	<-t.C
 
 	return &backend[K, V]{
-		done:  make(chan struct{}),
 		timer: t,
+		done:  make(chan struct{}),
+		xmap:  newSyncMapWrapper[K, *record[V]](capacity),
 		cap:   capacity,
 	}
 }
@@ -49,13 +57,10 @@ func (b *backend[K, V]) Evict(key K) (*record[V], bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if rec, ok := b.Load(key); ok {
-		if r := rec.(*record[V]); r.initialized.Load() {
-			b.Delete(key)
-			b.list.Remove(r)
-
-			return r, true
-		}
+	if r, ok := b.xmap.Load(key); ok && r.initialized.Load() {
+		b.xmap.Delete(key)
+		b.list.Remove(r)
+		return r, true
 	}
 
 	return nil, false
@@ -115,10 +120,10 @@ func (b *backend[K, V]) runGC(now int64) {
 
 	var earliest int64
 
-	b.Range(func(key, value any) bool {
-		if r := value.(*record[V]); r.initialized.Load() {
+	b.xmap.Range(func(key K, r *record[V]) bool {
+		if r.initialized.Load() {
 			if len(overflowed) > 0 && overflowed[r] || r.deadline > 0 && r.deadline < now {
-				b.Delete(key.(K))
+				b.xmap.Delete(key)
 				b.list.Remove(r)
 			} else if r.deadline > 0 && (earliest == 0 || r.deadline < earliest) {
 				earliest = r.deadline
