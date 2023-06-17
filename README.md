@@ -14,6 +14,8 @@ c := evcache.New[string, string](10)
 
 // Fetches an existing value or calls the callback to get a new value.
 result, err := c.Fetch("key", time.Minute, func() (string, error) {
+	// Possibly a very long network call. It only blocks write access to this key.
+	// Read access to the key is always non-blocking.
 	return "value", nil
 })
 
