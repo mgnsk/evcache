@@ -7,13 +7,6 @@ import (
 	"github.com/mgnsk/evcache/v3/ringlist"
 )
 
-type storageMap[K comparable, V any] interface {
-	Load(key K) (value V, ok bool)
-	LoadOrStore(key K, value V) (actual V, loaded bool)
-	Delete(key K)
-	Range(f func(key K, value V) bool)
-}
-
 type recordList[V any] struct {
 	ringlist.List[record[V], *record[V]]
 }
@@ -21,7 +14,7 @@ type recordList[V any] struct {
 type backend[K comparable, V any] struct {
 	timer            *time.Timer
 	done             chan struct{}
-	xmap             storageMap[K, *record[V]]
+	xmap             syncMapWrapper[K, *record[V]]
 	list             recordList[V]
 	earliestExpireAt int64
 	cap              int
@@ -36,7 +29,6 @@ func newBackend[K comparable, V any](capacity int) *backend[K, V] {
 	return &backend[K, V]{
 		timer: t,
 		done:  make(chan struct{}),
-		xmap:  newSyncMapWrapper[K, *record[V]](capacity),
 		cap:   capacity,
 	}
 }

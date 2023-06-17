@@ -1,15 +1,12 @@
 package evcache
 
-import "sync"
+import (
+	"sync"
+)
 
+// syncMapWrapper wraps sync.Map. The zero syncMapWrapper is empty and ready to use.
 type syncMapWrapper[K comparable, V any] struct {
 	sync.Map
-}
-
-var _ storageMap[string, string] = &syncMapWrapper[string, string]{}
-
-func newSyncMapWrapper[K comparable, V any](capacity int) storageMap[K, V] {
-	return &syncMapWrapper[K, V]{}
 }
 
 func (w *syncMapWrapper[K, V]) Load(key K) (value V, ok bool) {
