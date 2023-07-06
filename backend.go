@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mgnsk/evcache/v3/ringlist"
+	"github.com/mgnsk/ringlist"
 )
 
 type recordList[V any] struct {
