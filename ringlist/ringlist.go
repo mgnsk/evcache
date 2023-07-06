@@ -14,15 +14,12 @@ type ListElement[E any] interface {
 	Prev() E
 }
 
-// PtrListElement is a pointer list element constraint.
-type PtrListElement[T any, E any] interface {
-	*T
-	ListElement[E]
-}
-
 // List is a generic circular doubly linked list.
 // The zero value is a ready to use empty list.
-type List[T any, E PtrListElement[T, E]] struct {
+type List[T any, E interface {
+	*T
+	ListElement[E]
+}] struct {
 	tail E
 	len  int
 }
