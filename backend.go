@@ -4,11 +4,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mgnsk/ringlist"
+	"github.com/mgnsk/list"
 )
 
 type recordList[V any] struct {
-	ringlist.List[record[V], *record[V]]
+	list.ListOf[record[V], *record[V]]
 }
 
 type backend[K comparable, V any] struct {
