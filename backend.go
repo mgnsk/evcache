@@ -20,7 +20,7 @@ type Backend[K comparable, V any] struct {
 	earliestExpireAt int64
 	cap              int
 	once             sync.Once
-	mu               sync.RWMutex
+	mu               sync.Mutex
 }
 
 // NewRWMutexMapBackend creates a read-write mutex map backend.
