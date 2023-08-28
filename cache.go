@@ -8,20 +8,33 @@ import (
 
 // Cache is an in-memory TTL cache with optional capacity.
 type Cache[K comparable, V any] struct {
-	backend *backend[K, V]
+	backend *Backend[K, V]
 	pool    sync.Pool
 }
 
 // New creates an empty cache.
 func New[K comparable, V any](capacity int) *Cache[K, V] {
-	b := newBackend[K, V](capacity)
+	b := NewRWMutexMapBackend[K, V](capacity)
 
 	c := &Cache[K, V]{
 		backend: b,
 	}
 
 	runtime.SetFinalizer(c, func(any) {
-		b.Close()
+		b.close()
+	})
+
+	return c
+}
+
+// NewWithBackend creates a cache from backend.
+func NewWithBackend[K comparable, V any](b *Backend[K, V]) *Cache[K, V] {
+	c := &Cache[K, V]{
+		backend: b,
+	}
+
+	runtime.SetFinalizer(c, func(any) {
+		b.close()
 	})
 
 	return c
@@ -58,12 +71,12 @@ func (c *Cache[K, V]) Range(f func(key K, value V) bool) {
 
 // Len returns the number of keys in the cache.
 func (c *Cache[K, V]) Len() int {
-	return c.backend.Len()
+	return c.backend.len()
 }
 
 // Evict a key and return its value.
 func (c *Cache[K, V]) Evict(key K) (value V, ok bool) {
-	if r, ok := c.backend.Evict(key); ok {
+	if r, ok := c.backend.evict(key); ok {
 		return r.value, true
 	}
 
@@ -151,7 +164,7 @@ loadOrStore:
 		new.deadline = time.Now().Add(ttl).UnixNano()
 	}
 
-	c.backend.PushBack(new, ttl)
+	c.backend.pushBack(new, ttl)
 
 	return value, nil
 }

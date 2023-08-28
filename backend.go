@@ -11,41 +11,57 @@ type recordList[V any] struct {
 	list.ListOf[record[V], *record[V]]
 }
 
-type backend[K comparable, V any] struct {
+// Backend is a cache backend.
+type Backend[K comparable, V any] struct {
 	timer            *time.Timer
 	done             chan struct{}
-	xmap             syncMapWrapper[K, *record[V]]
+	xmap             concurrentMap[K, *record[V]]
 	list             recordList[V]
 	earliestExpireAt int64
 	cap              int
 	once             sync.Once
-	mu               sync.Mutex
+	mu               sync.RWMutex
 }
 
-func newBackend[K comparable, V any](capacity int) *backend[K, V] {
+// NewRWMutexMapBackend creates a read-write mutex map backend.
+func NewRWMutexMapBackend[K comparable, V any](capacity int) *Backend[K, V] {
 	t := time.NewTimer(0)
 	<-t.C
 
-	return &backend[K, V]{
+	return &Backend[K, V]{
 		timer: t,
 		done:  make(chan struct{}),
+		xmap:  newRWMutexMap[K, *record[V]](capacity),
 		cap:   capacity,
 	}
 }
 
-func (b *backend[K, V]) Close() error {
+// NewSyncMapBackend creates a sync.Map backend.
+func NewSyncMapBackend[K comparable, V any](capacity int) *Backend[K, V] {
+	t := time.NewTimer(0)
+	<-t.C
+
+	return &Backend[K, V]{
+		timer: t,
+		done:  make(chan struct{}),
+		xmap:  newSyncMapWrapper[K, *record[V]](),
+		cap:   capacity,
+	}
+}
+
+func (b *Backend[K, V]) close() error {
 	close(b.done)
 	return nil
 }
 
-func (b *backend[K, V]) Len() int {
+func (b *Backend[K, V]) len() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	return b.list.Len()
 }
 
-func (b *backend[K, V]) Evict(key K) (*record[V], bool) {
+func (b *Backend[K, V]) evict(key K) (*record[V], bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -58,7 +74,7 @@ func (b *backend[K, V]) Evict(key K) (*record[V], bool) {
 	return nil, false
 }
 
-func (b *backend[K, V]) PushBack(r *record[V], ttl time.Duration) {
+func (b *Backend[K, V]) pushBack(r *record[V], ttl time.Duration) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -77,7 +93,7 @@ func (b *backend[K, V]) PushBack(r *record[V], ttl time.Duration) {
 	}
 }
 
-func (b *backend[K, V]) startGCOnce() {
+func (b *Backend[K, V]) startGCOnce() {
 	b.once.Do(func() {
 		go func() {
 			for {
@@ -95,7 +111,7 @@ func (b *backend[K, V]) startGCOnce() {
 	})
 }
 
-func (b *backend[K, V]) runGC(now int64) {
+func (b *Backend[K, V]) runGC(now int64) {
 	var overflowed map[*record[V]]bool
 
 	if n := b.overflow(); n > 0 {
@@ -131,7 +147,7 @@ func (b *backend[K, V]) runGC(now int64) {
 	}
 }
 
-func (b *backend[K, V]) overflow() int {
+func (b *Backend[K, V]) overflow() int {
 	if b.cap > 0 && b.list.Len() > b.cap {
 		return b.list.Len() - b.cap
 	}
