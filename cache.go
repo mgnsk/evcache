@@ -8,27 +8,14 @@ import (
 
 // Cache is an in-memory TTL cache with optional capacity.
 type Cache[K comparable, V any] struct {
-	backend *Backend[K, V]
+	backend *backend[K, V]
 	pool    sync.Pool
 }
 
 // New creates an empty cache.
 func New[K comparable, V any](capacity int) *Cache[K, V] {
-	b := NewRWMutexMapBackend[K, V](capacity)
+	b := newBackend[K, V](capacity)
 
-	c := &Cache[K, V]{
-		backend: b,
-	}
-
-	runtime.SetFinalizer(c, func(any) {
-		b.close()
-	})
-
-	return c
-}
-
-// NewWithBackend creates a cache from backend.
-func NewWithBackend[K comparable, V any](b *Backend[K, V]) *Cache[K, V] {
 	c := &Cache[K, V]{
 		backend: b,
 	}
@@ -42,13 +29,19 @@ func NewWithBackend[K comparable, V any](b *Backend[K, V]) *Cache[K, V] {
 
 // Exists returns whether a value in the cache exists for key.
 func (c *Cache[K, V]) Exists(key K) bool {
-	r, ok := c.backend.xmap.Load(key)
+	c.backend.mu.RLock()
+	defer c.backend.mu.RUnlock()
+
+	r, ok := c.backend.xmap[key]
 	return ok && r.initialized.Load()
 }
 
 // Get returns the value stored in the cache for key.
 func (c *Cache[K, V]) Get(key K) (value V, exists bool) {
-	if r, ok := c.backend.xmap.Load(key); ok && r.initialized.Load() {
+	c.backend.mu.RLock()
+	defer c.backend.mu.RUnlock()
+
+	if r, ok := c.backend.xmap[key]; ok && r.initialized.Load() {
 		return r.value, true
 	}
 
@@ -61,7 +54,7 @@ func (c *Cache[K, V]) Get(key K) (value V, exists bool) {
 //
 // Range is allowed to modify the cache.
 func (c *Cache[K, V]) Range(f func(key K, value V) bool) {
-	c.backend.xmap.Range(func(key K, r *record[V]) bool {
+	c.backend.xmap.Range(&c.backend.mu, func(key K, r *record[V]) bool {
 		if r.initialized.Load() {
 			return f(key, r.value)
 		}
@@ -71,11 +64,17 @@ func (c *Cache[K, V]) Range(f func(key K, value V) bool) {
 
 // Len returns the number of keys in the cache.
 func (c *Cache[K, V]) Len() int {
-	return c.backend.len()
+	c.backend.mu.Lock()
+	defer c.backend.mu.Unlock()
+
+	return c.backend.list.Len()
 }
 
 // Evict a key and return its value.
 func (c *Cache[K, V]) Evict(key K) (value V, ok bool) {
+	c.backend.mu.Lock()
+	defer c.backend.mu.Unlock()
+
 	if r, ok := c.backend.evict(key); ok {
 		return r.value, true
 	}
@@ -127,7 +126,7 @@ func (c *Cache[K, V]) TryFetch(key K, f func() (V, time.Duration, error)) (value
 	defer new.wg.Done()
 
 loadOrStore:
-	if r, loaded := c.backend.xmap.LoadOrStore(key, new); loaded {
+	if r, loaded := c.backend.xmap.LoadOrStore(&c.backend.mu, key, new); loaded {
 		if r.initialized.Load() {
 			c.pool.Put(new)
 			return r.value, nil
@@ -145,7 +144,10 @@ loadOrStore:
 
 	defer func() {
 		if r := recover(); r != nil {
-			c.backend.xmap.Delete(key)
+			c.backend.mu.Lock()
+			defer c.backend.mu.Unlock()
+
+			delete(c.backend.xmap, key)
 
 			panic(r)
 		}
@@ -153,7 +155,10 @@ loadOrStore:
 
 	value, ttl, err := f()
 	if err != nil {
-		c.backend.xmap.Delete(key)
+		c.backend.mu.Lock()
+		defer c.backend.mu.Unlock()
+
+		delete(c.backend.xmap, key)
 
 		var zero V
 		return zero, err
@@ -163,6 +168,9 @@ loadOrStore:
 	if ttl > 0 {
 		new.deadline = time.Now().Add(ttl).UnixNano()
 	}
+
+	c.backend.mu.Lock()
+	defer c.backend.mu.Unlock()
 
 	c.backend.pushBack(new, ttl)
 
