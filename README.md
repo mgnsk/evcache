@@ -5,7 +5,7 @@
 
 `import "github.com/mgnsk/evcache/v3"`
 
-Package evcache implements a key-value cache with capacity overflow eviction, item expiry and deduplication.
+Package evcache implements a concurrent key-value cache with capacity overflow eviction, item expiry and deduplication.
 
 ### Example
 
