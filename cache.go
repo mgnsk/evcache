@@ -32,7 +32,7 @@ func (c *Cache[K, V]) Exists(key K) bool {
 	c.backend.mu.RLock()
 	defer c.backend.mu.RUnlock()
 
-	r, ok := c.backend.xmap[key]
+	r, ok := c.backend.xmap.Load(key)
 	return ok && r.initialized.Load()
 }
 
@@ -41,7 +41,7 @@ func (c *Cache[K, V]) Get(key K) (value V, exists bool) {
 	c.backend.mu.RLock()
 	defer c.backend.mu.RUnlock()
 
-	if r, ok := c.backend.xmap[key]; ok && r.initialized.Load() {
+	if r, ok := c.backend.xmap.Load(key); ok && r.initialized.Load() {
 		return r.value, true
 	}
 
@@ -54,7 +54,7 @@ func (c *Cache[K, V]) Get(key K) (value V, exists bool) {
 //
 // Range is allowed to modify the cache.
 func (c *Cache[K, V]) Range(f func(key K, value V) bool) {
-	c.backend.xmap.Range(&c.backend.mu, func(key K, r *record[V]) bool {
+	c.backend.Range(func(key K, r *record[V]) bool {
 		if r.initialized.Load() {
 			return f(key, r.value)
 		}
@@ -126,7 +126,7 @@ func (c *Cache[K, V]) TryFetch(key K, f func() (V, time.Duration, error)) (value
 	defer new.wg.Done()
 
 loadOrStore:
-	if r, loaded := c.backend.xmap.LoadOrStore(&c.backend.mu, key, new); loaded {
+	if r, loaded := c.backend.LoadOrStore(key, new); loaded {
 		if r.initialized.Load() {
 			c.pool.Put(new)
 			return r.value, nil
@@ -147,7 +147,7 @@ loadOrStore:
 			c.backend.mu.Lock()
 			defer c.backend.mu.Unlock()
 
-			delete(c.backend.xmap, key)
+			c.backend.xmap.Delete(key)
 
 			panic(r)
 		}
@@ -158,7 +158,7 @@ loadOrStore:
 		c.backend.mu.Lock()
 		defer c.backend.mu.Unlock()
 
-		delete(c.backend.xmap, key)
+		c.backend.xmap.Delete(key)
 
 		var zero V
 		return zero, err

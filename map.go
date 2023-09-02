@@ -1,42 +1,35 @@
 package evcache
 
-import "sync"
+type backendMap[K comparable, V any] interface {
+	Load(K) (V, bool)
+	Store(K, V)
+	Delete(K)
+	Len() int
+	Range(func(K, V) bool)
+}
 
 type builtinMap[K comparable, V any] map[K]V
 
-func (m builtinMap[K, V]) LoadOrStore(mu *sync.RWMutex, key K, value V) (actual V, loaded bool) {
-	mu.RLock()
-	if v, ok := m[key]; ok {
-		mu.RUnlock()
-		return v, true
-	}
-	mu.RUnlock()
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	if v, ok := m[key]; ok {
-		return v, true
-	}
-
-	m[key] = value
-
-	return value, false
+func (m builtinMap[K, V]) Load(key K) (value V, ok bool) {
+	value, ok = m[key]
+	return
 }
 
-func (m builtinMap[K, V]) Range(mu *sync.RWMutex, f func(key K, value V) bool) {
-	mu.RLock()
-	keys := make([]K, 0, len(m))
-	for key := range m {
-		keys = append(keys, key)
-	}
-	mu.RUnlock()
+func (m builtinMap[K, V]) Store(key K, value V) {
+	m[key] = value
+}
 
-	for _, key := range keys {
-		mu.RLock()
-		v, ok := m[key]
-		mu.RUnlock()
-		if ok && !f(key, v) {
+func (m builtinMap[K, V]) Delete(key K) {
+	delete(m, key)
+}
+
+func (m builtinMap[K, V]) Len() int {
+	return len(m)
+}
+
+func (m builtinMap[K, V]) Range(f func(key K, value V) bool) {
+	for k, v := range m {
+		if !f(k, v) {
 			return
 		}
 	}
