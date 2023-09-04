@@ -4,6 +4,8 @@ import (
 	"runtime"
 	"sync"
 	"time"
+
+	"github.com/mgnsk/list"
 )
 
 // Cache is an in-memory TTL cache with optional capacity.
@@ -32,8 +34,8 @@ func (c *Cache[K, V]) Exists(key K) bool {
 	c.backend.mu.RLock()
 	defer c.backend.mu.RUnlock()
 
-	r, ok := c.backend.xmap.Load(key)
-	return ok && r.initialized.Load()
+	elem, ok := c.backend.xmap.Load(key)
+	return ok && elem.Value.initialized.Load()
 }
 
 // Get returns the value stored in the cache for key.
@@ -41,8 +43,8 @@ func (c *Cache[K, V]) Get(key K) (value V, exists bool) {
 	c.backend.mu.RLock()
 	defer c.backend.mu.RUnlock()
 
-	if r, ok := c.backend.xmap.Load(key); ok && r.initialized.Load() {
-		return r.value, true
+	if elem, ok := c.backend.xmap.Load(key); ok && elem.Value.initialized.Load() {
+		return elem.Value.value, true
 	}
 
 	var zero V
@@ -54,9 +56,9 @@ func (c *Cache[K, V]) Get(key K) (value V, exists bool) {
 //
 // Range is allowed to modify the cache.
 func (c *Cache[K, V]) Range(f func(key K, value V) bool) {
-	c.backend.Range(func(key K, r *record[V]) bool {
-		if r.initialized.Load() {
-			return f(key, r.value)
+	c.backend.Range(func(key K, elem *list.Element[record[V]]) bool {
+		if elem.Value.initialized.Load() {
+			return f(key, elem.Value.value)
 		}
 		return true
 	})
@@ -75,8 +77,8 @@ func (c *Cache[K, V]) Evict(key K) (value V, ok bool) {
 	c.backend.mu.Lock()
 	defer c.backend.mu.Unlock()
 
-	if r, ok := c.backend.evict(key); ok {
-		return r.value, true
+	if elem, ok := c.backend.evict(key); ok {
+		return elem.Value.value, true
 	}
 
 	var zero V
@@ -117,26 +119,26 @@ func (c *Cache[K, V]) Fetch(key K, ttl time.Duration, f func() (V, error)) (valu
 
 // TryFetch is like Fetch but allows the TTL to be returned alongside the value from callback.
 func (c *Cache[K, V]) TryFetch(key K, f func() (V, time.Duration, error)) (value V, err error) {
-	new, ok := c.pool.Get().(*record[V])
+	new, ok := c.pool.Get().(*list.Element[record[V]])
 	if !ok {
-		new = newRecord[V]()
+		new = list.NewElement(record[V]{})
 	}
 
-	new.wg.Add(1)
-	defer new.wg.Done()
+	new.Value.wg.Add(1)
+	defer new.Value.wg.Done()
 
 loadOrStore:
-	if r, loaded := c.backend.LoadOrStore(key, new); loaded {
-		if r.initialized.Load() {
+	if elem, loaded := c.backend.LoadOrStore(key, new); loaded {
+		if elem.Value.initialized.Load() {
 			c.pool.Put(new)
-			return r.value, nil
+			return elem.Value.value, nil
 		}
 
-		r.wg.Wait()
+		elem.Value.wg.Wait()
 
-		if r.initialized.Load() {
+		if elem.Value.initialized.Load() {
 			c.pool.Put(new)
-			return r.value, nil
+			return elem.Value.value, nil
 		}
 
 		goto loadOrStore
@@ -164,9 +166,9 @@ loadOrStore:
 		return zero, err
 	}
 
-	new.value = value
+	new.Value.value = value
 	if ttl > 0 {
-		new.deadline = time.Now().Add(ttl).UnixNano()
+		new.Value.deadline = time.Now().Add(ttl).UnixNano()
 	}
 
 	c.backend.mu.Lock()
