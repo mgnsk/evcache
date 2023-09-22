@@ -23,7 +23,7 @@ func New[K comparable, V any](capacity int) *Cache[K, V] {
 	}
 
 	runtime.SetFinalizer(c, func(any) {
-		b.close()
+		b.Close()
 	})
 
 	return c

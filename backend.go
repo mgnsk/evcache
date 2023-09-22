@@ -38,7 +38,7 @@ func newBackend[K comparable, V any](capacity int) *backend[K, V] {
 	}
 }
 
-func (b *backend[K, V]) close() error {
+func (b *backend[K, V]) Close() error {
 	close(b.done)
 	return nil
 }
@@ -130,8 +130,7 @@ func (b *backend[K, V]) runGC(now int64) {
 
 	var overflowed map[*list.Element[record[V]]]bool
 
-	n := b.overflow()
-	if n > 0 {
+	if n := b.overflow(); n > 0 {
 		overflowed = make(map[*list.Element[record[V]]]bool, n)
 
 		elem := b.list.Front()
@@ -147,7 +146,11 @@ func (b *backend[K, V]) runGC(now int64) {
 
 	b.xmap.Range(func(key K, elem *list.Element[record[V]]) bool {
 		if elem.Value.initialized.Load() {
-			if n > 0 && overflowed[elem] || elem.Value.deadline > 0 && elem.Value.deadline < now {
+			if len(overflowed) > 0 && overflowed[elem] {
+				delete(overflowed, elem)
+				b.xmap.Delete(key)
+				b.list.Remove(elem)
+			} else if elem.Value.deadline > 0 && elem.Value.deadline < now {
 				b.xmap.Delete(key)
 				b.list.Remove(elem)
 			} else if elem.Value.deadline > 0 && (earliest == 0 || elem.Value.deadline < earliest) {
