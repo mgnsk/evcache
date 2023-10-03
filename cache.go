@@ -1,3 +1,6 @@
+/*
+Package evcache implements a concurrent key-value cache with capacity overflow eviction, item expiry and deduplication.
+*/
 package evcache
 
 import (
@@ -5,18 +8,19 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mgnsk/evcache/v3/internal/backend"
 	"github.com/mgnsk/list"
 )
 
 // Cache is an in-memory TTL cache with optional capacity.
 type Cache[K comparable, V any] struct {
-	backend *backend[K, V]
+	backend *backend.Backend[K, V]
 	pool    sync.Pool
 }
 
 // New creates an empty cache.
 func New[K comparable, V any](capacity int) *Cache[K, V] {
-	b := newBackend[K, V](capacity)
+	b := backend.NewBackend[K, V](capacity)
 
 	c := &Cache[K, V]{
 		backend: b,
@@ -31,20 +35,20 @@ func New[K comparable, V any](capacity int) *Cache[K, V] {
 
 // Exists returns whether a value in the cache exists for key.
 func (c *Cache[K, V]) Exists(key K) bool {
-	c.backend.mu.RLock()
-	defer c.backend.mu.RUnlock()
+	c.backend.RLock()
+	defer c.backend.RUnlock()
 
-	elem, ok := c.backend.xmap[key]
-	return ok && elem.Value.initialized.Load()
+	elem, ok := c.backend.Load(key)
+	return ok && elem.Value.Initialized.Load()
 }
 
 // Get returns the value stored in the cache for key.
 func (c *Cache[K, V]) Get(key K) (value V, exists bool) {
-	c.backend.mu.RLock()
-	defer c.backend.mu.RUnlock()
+	c.backend.RLock()
+	defer c.backend.RUnlock()
 
-	if elem, ok := c.backend.xmap[key]; ok && elem.Value.initialized.Load() {
-		return elem.Value.value, true
+	if elem, ok := c.backend.Load(key); ok && elem.Value.Initialized.Load() {
+		return elem.Value.Value, true
 	}
 
 	var zero V
@@ -56,9 +60,9 @@ func (c *Cache[K, V]) Get(key K) (value V, exists bool) {
 //
 // Range is allowed to modify the cache.
 func (c *Cache[K, V]) Range(f func(key K, value V) bool) {
-	c.backend.Range(func(key K, elem *list.Element[record[V]]) bool {
-		if elem.Value.initialized.Load() {
-			return f(key, elem.Value.value)
+	c.backend.Range(func(key K, elem *list.Element[backend.Record[V]]) bool {
+		if elem.Value.Initialized.Load() {
+			return f(key, elem.Value.Value)
 		}
 		return true
 	})
@@ -66,19 +70,19 @@ func (c *Cache[K, V]) Range(f func(key K, value V) bool) {
 
 // Len returns the number of keys in the cache.
 func (c *Cache[K, V]) Len() int {
-	c.backend.mu.Lock()
-	defer c.backend.mu.Unlock()
+	c.backend.Lock()
+	defer c.backend.Unlock()
 
-	return c.backend.list.Len()
+	return c.backend.Len()
 }
 
 // Evict a key and return its value.
 func (c *Cache[K, V]) Evict(key K) (value V, ok bool) {
-	c.backend.mu.Lock()
-	defer c.backend.mu.Unlock()
+	c.backend.Lock()
+	defer c.backend.Unlock()
 
-	if elem, ok := c.backend.evict(key); ok {
-		return elem.Value.value, true
+	if elem, ok := c.backend.Evict(key); ok {
+		return elem.Value.Value, true
 	}
 
 	var zero V
@@ -119,26 +123,26 @@ func (c *Cache[K, V]) Fetch(key K, ttl time.Duration, f func() (V, error)) (valu
 
 // TryFetch is like Fetch but allows the TTL to be returned alongside the value from callback.
 func (c *Cache[K, V]) TryFetch(key K, f func() (V, time.Duration, error)) (value V, err error) {
-	new, ok := c.pool.Get().(*list.Element[record[V]])
+	new, ok := c.pool.Get().(*list.Element[backend.Record[V]])
 	if !ok {
-		new = list.NewElement(record[V]{})
+		new = list.NewElement(backend.Record[V]{})
 	}
 
-	new.Value.wg.Add(1)
-	defer new.Value.wg.Done()
+	new.Value.Wg.Add(1)
+	defer new.Value.Wg.Done()
 
 loadOrStore:
 	if elem, loaded := c.backend.LoadOrStore(key, new); loaded {
-		if elem.Value.initialized.Load() {
+		if elem.Value.Initialized.Load() {
 			c.pool.Put(new)
-			return elem.Value.value, nil
+			return elem.Value.Value, nil
 		}
 
-		elem.Value.wg.Wait()
+		elem.Value.Wg.Wait()
 
-		if elem.Value.initialized.Load() {
+		if elem.Value.Initialized.Load() {
 			c.pool.Put(new)
-			return elem.Value.value, nil
+			return elem.Value.Value, nil
 		}
 
 		goto loadOrStore
@@ -146,10 +150,10 @@ loadOrStore:
 
 	defer func() {
 		if r := recover(); r != nil {
-			c.backend.mu.Lock()
-			defer c.backend.mu.Unlock()
+			c.backend.Lock()
+			defer c.backend.Unlock()
 
-			c.backend.delete(key)
+			c.backend.Delete(key)
 
 			panic(r)
 		}
@@ -157,24 +161,24 @@ loadOrStore:
 
 	value, ttl, err := f()
 	if err != nil {
-		c.backend.mu.Lock()
-		defer c.backend.mu.Unlock()
+		c.backend.Lock()
+		defer c.backend.Unlock()
 
-		c.backend.delete(key)
+		c.backend.Delete(key)
 
 		var zero V
 		return zero, err
 	}
 
-	new.Value.value = value
+	new.Value.Value = value
 	if ttl > 0 {
-		new.Value.deadline = time.Now().Add(ttl).UnixNano()
+		new.Value.Deadline = time.Now().Add(ttl).UnixNano()
 	}
 
-	c.backend.mu.Lock()
-	defer c.backend.mu.Unlock()
+	c.backend.Lock()
+	defer c.backend.Unlock()
 
-	c.backend.pushBack(new, ttl)
+	c.backend.PushBack(new, ttl)
 
 	return value, nil
 }
