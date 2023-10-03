@@ -19,14 +19,17 @@ type Record[V any] struct {
 	Initialized atomic.Bool
 }
 
-// Map is the cache's backend map.
-type Map[K comparable, V any] map[K]*list.Element[Record[V]]
+// Element is the cache element.
+type Element[V any] *list.Element[Record[V]]
+
+// RecordMap is the cache's record map.
+type RecordMap[K comparable, V any] map[K]Element[V]
 
 // Backend implements cache backend.
 type Backend[K comparable, V any] struct {
 	timer            *time.Timer
 	done             chan struct{}
-	xmap             Map[K, V]
+	xmap             RecordMap[K, V]
 	list             list.List[Record[V]]
 	earliestExpireAt int64
 	cap              int
@@ -43,13 +46,13 @@ func NewBackend[K comparable, V any](capacity int) *Backend[K, V] {
 	return &Backend[K, V]{
 		timer: t,
 		done:  make(chan struct{}),
-		xmap:  make(Map[K, V], capacity),
+		xmap:  make(RecordMap[K, V], capacity),
 		cap:   capacity,
 	}
 }
 
 // Map returns the backend map for testing.
-func (b *Backend[K, V]) Map() map[K]*list.Element[Record[V]] {
+func (b *Backend[K, V]) Map() RecordMap[K, V] {
 	return b.xmap
 }
 
@@ -65,13 +68,13 @@ func (b *Backend[K, V]) Len() int {
 }
 
 // Load an element.
-func (b *Backend[K, V]) Load(key K) (value *list.Element[Record[V]], ok bool) {
+func (b *Backend[K, V]) Load(key K) (value Element[V], ok bool) {
 	r, ok := b.xmap[key]
 	return r, ok
 }
 
 // LoadOrStore loads or stores an element.
-func (b *Backend[K, V]) LoadOrStore(key K, new *list.Element[Record[V]]) (old *list.Element[Record[V]], loaded bool) {
+func (b *Backend[K, V]) LoadOrStore(key K, new Element[V]) (old Element[V], loaded bool) {
 	b.RLock()
 	if elem, ok := b.xmap[key]; ok {
 		b.RUnlock()
@@ -92,7 +95,7 @@ func (b *Backend[K, V]) LoadOrStore(key K, new *list.Element[Record[V]]) (old *l
 }
 
 // Range iterates over cache records in no particular order.
-func (b *Backend[K, V]) Range(f func(key K, r *list.Element[Record[V]]) bool) {
+func (b *Backend[K, V]) Range(f func(key K, r Element[V]) bool) {
 	b.RLock()
 	keys := make([]K, 0, len(b.xmap))
 	for k := range b.xmap {
@@ -111,7 +114,7 @@ func (b *Backend[K, V]) Range(f func(key K, r *list.Element[Record[V]]) bool) {
 }
 
 // Evict a record.
-func (b *Backend[K, V]) Evict(key K) (*list.Element[Record[V]], bool) {
+func (b *Backend[K, V]) Evict(key K) (Element[V], bool) {
 	if elem, ok := b.xmap[key]; ok && elem.Value.Initialized.Load() {
 		b.Delete(key)
 		b.list.Remove(elem)
@@ -134,7 +137,7 @@ func (b *Backend[K, V]) Delete(key K) {
 	if len(b.xmap) < b.largestLen/2 {
 		b.largestLen = 0
 
-		newMap := make(Map[K, V], len(b.xmap))
+		newMap := make(RecordMap[K, V], len(b.xmap))
 		for k, v := range b.xmap {
 			newMap[k] = v
 		}
@@ -144,7 +147,7 @@ func (b *Backend[K, V]) Delete(key K) {
 }
 
 // PushBack appends a new record to backend.
-func (b *Backend[K, V]) PushBack(elem *list.Element[Record[V]], ttl time.Duration) {
+func (b *Backend[K, V]) PushBack(elem Element[V], ttl time.Duration) {
 	b.list.PushBack(elem)
 	elem.Value.Initialized.Store(true)
 
@@ -180,10 +183,10 @@ func (b *Backend[K, V]) runGC(now int64) {
 	b.Lock()
 	defer b.Unlock()
 
-	var overflowed map[*list.Element[Record[V]]]bool
+	var overflowed map[Element[V]]bool
 
 	if n := b.overflow(); n > 0 {
-		overflowed = make(map[*list.Element[Record[V]]]bool, n)
+		overflowed = make(map[Element[V]]bool, n)
 
 		elem := b.list.Front()
 		overflowed[elem] = true

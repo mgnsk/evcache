@@ -60,7 +60,7 @@ func (c *Cache[K, V]) Get(key K) (value V, exists bool) {
 //
 // Range is allowed to modify the cache.
 func (c *Cache[K, V]) Range(f func(key K, value V) bool) {
-	c.backend.Range(func(key K, elem *list.Element[backend.Record[V]]) bool {
+	c.backend.Range(func(key K, elem backend.Element[V]) bool {
 		if elem.Value.Initialized.Load() {
 			return f(key, elem.Value.Value)
 		}
@@ -123,7 +123,7 @@ func (c *Cache[K, V]) Fetch(key K, ttl time.Duration, f func() (V, error)) (valu
 
 // TryFetch is like Fetch but allows the TTL to be returned alongside the value from callback.
 func (c *Cache[K, V]) TryFetch(key K, f func() (V, time.Duration, error)) (value V, err error) {
-	new, ok := c.pool.Get().(*list.Element[backend.Record[V]])
+	new, ok := c.pool.Get().(backend.Element[V])
 	if !ok {
 		new = list.NewElement(backend.Record[V]{})
 	}

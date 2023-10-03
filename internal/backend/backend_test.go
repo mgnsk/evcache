@@ -24,14 +24,14 @@ func TestMapShrink(t *testing.T) {
 	g.Expect(b.Len()).To(Equal(size))
 	g.Expect(b.Map()).To(HaveLen(size))
 
-	// TODO: expect cap(m) >= len(m)
+	// TODO: Assert that cap(m) >= len(m)
 
 	// Evict half+1 records.
 	for i := 0; i < size/2+1; i++ {
 		b.Evict(i)
 	}
 
-	// TODO: expect len(m) == cap(m)
+	// TODO: Assert len(m) == cap(m)
 
 	g.Expect(b.Map()).To(HaveLen(size/2 - 1))
 }
