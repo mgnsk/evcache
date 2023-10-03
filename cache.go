@@ -34,7 +34,7 @@ func (c *Cache[K, V]) Exists(key K) bool {
 	c.backend.mu.RLock()
 	defer c.backend.mu.RUnlock()
 
-	elem, ok := c.backend.xmap.Load(key)
+	elem, ok := c.backend.xmap[key]
 	return ok && elem.Value.initialized.Load()
 }
 
@@ -43,7 +43,7 @@ func (c *Cache[K, V]) Get(key K) (value V, exists bool) {
 	c.backend.mu.RLock()
 	defer c.backend.mu.RUnlock()
 
-	if elem, ok := c.backend.xmap.Load(key); ok && elem.Value.initialized.Load() {
+	if elem, ok := c.backend.xmap[key]; ok && elem.Value.initialized.Load() {
 		return elem.Value.value, true
 	}
 
@@ -149,7 +149,7 @@ loadOrStore:
 			c.backend.mu.Lock()
 			defer c.backend.mu.Unlock()
 
-			c.backend.xmap.Delete(key)
+			c.backend.delete(key)
 
 			panic(r)
 		}
@@ -160,7 +160,7 @@ loadOrStore:
 		c.backend.mu.Lock()
 		defer c.backend.mu.Unlock()
 
-		c.backend.xmap.Delete(key)
+		c.backend.delete(key)
 
 		var zero V
 		return zero, err

@@ -18,7 +18,7 @@ type record[V any] struct {
 type backend[K comparable, V any] struct {
 	timer            *time.Timer
 	done             chan struct{}
-	xmap             backendMap[K, *list.Element[record[V]]]
+	xmap             map[K]*list.Element[record[V]]
 	list             list.List[record[V]]
 	earliestExpireAt int64
 	cap              int
@@ -33,7 +33,7 @@ func newBackend[K comparable, V any](capacity int) *backend[K, V] {
 	return &backend[K, V]{
 		timer: t,
 		done:  make(chan struct{}),
-		xmap:  make(builtinMap[K, *list.Element[record[V]]], capacity),
+		xmap:  make(map[K]*list.Element[record[V]], capacity),
 		cap:   capacity,
 	}
 }
@@ -45,7 +45,7 @@ func (b *backend[K, V]) Close() error {
 
 func (b *backend[K, V]) LoadOrStore(key K, new *list.Element[record[V]]) (old *list.Element[record[V]], loaded bool) {
 	b.mu.RLock()
-	if elem, ok := b.xmap.Load(key); ok {
+	if elem, ok := b.xmap[key]; ok {
 		b.mu.RUnlock()
 		return elem, true
 	}
@@ -54,27 +54,26 @@ func (b *backend[K, V]) LoadOrStore(key K, new *list.Element[record[V]]) (old *l
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if elem, ok := b.xmap.Load(key); ok {
+	if elem, ok := b.xmap[key]; ok {
 		return elem, true
 	}
 
-	b.xmap.Store(key, new)
+	b.xmap[key] = new
 
 	return new, false
 }
 
 func (b *backend[K, V]) Range(f func(key K, r *list.Element[record[V]]) bool) {
 	b.mu.RLock()
-	keys := make([]K, 0, b.xmap.Len())
-	b.xmap.Range(func(key K, _ *list.Element[record[V]]) bool {
-		keys = append(keys, key)
-		return true
-	})
+	keys := make([]K, 0, len(b.xmap))
+	for k := range b.xmap {
+		keys = append(keys, k)
+	}
 	b.mu.RUnlock()
 
 	for _, key := range keys {
 		b.mu.RLock()
-		elem, ok := b.xmap.Load(key)
+		elem, ok := b.xmap[key]
 		b.mu.RUnlock()
 		if ok && !f(key, elem) {
 			return
@@ -82,9 +81,14 @@ func (b *backend[K, V]) Range(f func(key K, r *list.Element[record[V]]) bool) {
 	}
 }
 
+func (b *backend[K, V]) delete(key K) {
+	// TODO: realloc map when map_capacity == 2*map_size to avoid memory leak?
+	delete(b.xmap, key)
+}
+
 func (b *backend[K, V]) evict(key K) (*list.Element[record[V]], bool) {
-	if elem, ok := b.xmap.Load(key); ok && elem.Value.initialized.Load() {
-		b.xmap.Delete(key)
+	if elem, ok := b.xmap[key]; ok && elem.Value.initialized.Load() {
+		b.delete(key)
 		b.list.Remove(elem)
 		return elem, true
 	}
@@ -144,21 +148,20 @@ func (b *backend[K, V]) runGC(now int64) {
 
 	var earliest int64
 
-	b.xmap.Range(func(key K, elem *list.Element[record[V]]) bool {
+	for key, elem := range b.xmap {
 		if elem.Value.initialized.Load() {
 			if len(overflowed) > 0 && overflowed[elem] {
 				delete(overflowed, elem)
-				b.xmap.Delete(key)
+				b.delete(key)
 				b.list.Remove(elem)
 			} else if elem.Value.deadline > 0 && elem.Value.deadline < now {
-				b.xmap.Delete(key)
+				b.delete(key)
 				b.list.Remove(elem)
 			} else if elem.Value.deadline > 0 && (earliest == 0 || elem.Value.deadline < earliest) {
 				earliest = elem.Value.deadline
 			}
 		}
-		return true
-	})
+	}
 
 	b.earliestExpireAt = earliest
 	if earliest > 0 {
