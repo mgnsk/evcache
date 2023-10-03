@@ -19,14 +19,18 @@ type Record[V any] struct {
 	Initialized atomic.Bool
 }
 
+// Map is the cache's backend map.
+type Map[K comparable, V any] map[K]*list.Element[Record[V]]
+
 // Backend implements cache backend.
 type Backend[K comparable, V any] struct {
 	timer            *time.Timer
 	done             chan struct{}
-	xmap             map[K]*list.Element[Record[V]]
+	xmap             Map[K, V]
 	list             list.List[Record[V]]
 	earliestExpireAt int64
 	cap              int
+	largestLen       int // the map has at least this capacity
 	once             sync.Once
 	sync.RWMutex
 }
@@ -39,9 +43,14 @@ func NewBackend[K comparable, V any](capacity int) *Backend[K, V] {
 	return &Backend[K, V]{
 		timer: t,
 		done:  make(chan struct{}),
-		xmap:  make(map[K]*list.Element[Record[V]], capacity),
+		xmap:  make(Map[K, V], capacity),
 		cap:   capacity,
 	}
+}
+
+// Map returns the backend map for testing.
+func (b *Backend[K, V]) Map() map[K]*list.Element[Record[V]] {
+	return b.xmap
 }
 
 // Close stops the backend cleanup loop.
@@ -114,8 +123,24 @@ func (b *Backend[K, V]) Evict(key K) (*list.Element[Record[V]], bool) {
 
 // Delete a record from the backend map.
 func (b *Backend[K, V]) Delete(key K) {
-	// TODO: realloc map when b.cap == 0 and 2*map_size == map_capacity to avoid memory leak?
+	// Keep track of map capacity.
+	if l := len(b.xmap); l > b.largestLen {
+		b.largestLen = l
+	}
+
 	delete(b.xmap, key)
+
+	// Shrink the map.
+	if len(b.xmap) < b.largestLen/2 {
+		b.largestLen = 0
+
+		newMap := make(Map[K, V], len(b.xmap))
+		for k, v := range b.xmap {
+			newMap[k] = v
+		}
+
+		b.xmap = newMap
+	}
 }
 
 // PushBack appends a new record to backend.
