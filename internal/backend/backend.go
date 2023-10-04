@@ -51,11 +51,6 @@ func NewBackend[K comparable, V any](capacity int) *Backend[K, V] {
 	}
 }
 
-// Map returns the backend map for testing.
-func (b *Backend[K, V]) Map() RecordMap[K, V] {
-	return b.xmap
-}
-
 // Close stops the backend cleanup loop.
 func (b *Backend[K, V]) Close() error {
 	close(b.done)
@@ -125,24 +120,18 @@ func (b *Backend[K, V]) Evict(key K) (Element[V], bool) {
 }
 
 // Delete a record from the backend map.
+// When half of the records are deleted, the map is reallocated.
 func (b *Backend[K, V]) Delete(key K) {
-	// Keep track of map capacity.
-	if l := len(b.xmap); l > b.largestLen {
-		b.largestLen = l
-	}
-
 	delete(b.xmap, key)
 
-	// Shrink the map.
-	if len(b.xmap) < b.largestLen/2 {
-		b.largestLen = 0
-
-		newMap := make(RecordMap[K, V], len(b.xmap))
+	if n := len(b.xmap); n > b.largestLen {
+		b.largestLen = n
+	} else if n <= b.largestLen/2 {
+		m := make(RecordMap[K, V], n)
 		for k, v := range b.xmap {
-			newMap[k] = v
+			m[k] = v
 		}
-
-		b.xmap = newMap
+		b.xmap = m
 	}
 }
 
