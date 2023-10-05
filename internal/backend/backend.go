@@ -22,6 +22,11 @@ type Record[V any] struct {
 // Element is the cache element.
 type Element[V any] *list.Element[Record[V]]
 
+// NewElement returns a new cache element.
+func NewElement[V any](v V) Element[V] {
+	return list.NewElement(Record[V]{Value: v})
+}
+
 // RecordMap is the cache's record map.
 type RecordMap[K comparable, V any] map[K]Element[V]
 
@@ -33,7 +38,9 @@ type Backend[K comparable, V any] struct {
 	list             list.List[Record[V]]
 	earliestExpireAt int64
 	cap              int
+	reallocThreshold int // if map hits this size and then shrinks by half, it is reallocated
 	largestLen       int // the map has at least this capacity
+	needRealloc      bool
 	once             sync.Once
 	sync.RWMutex
 }
@@ -44,10 +51,11 @@ func NewBackend[K comparable, V any](capacity int) *Backend[K, V] {
 	<-t.C
 
 	return &Backend[K, V]{
-		timer: t,
-		done:  make(chan struct{}),
-		xmap:  make(RecordMap[K, V], capacity),
-		cap:   capacity,
+		timer:            t,
+		done:             make(chan struct{}),
+		xmap:             make(RecordMap[K, V], capacity),
+		cap:              capacity,
+		reallocThreshold: 100000, // 100000 * pointer size
 	}
 }
 
@@ -120,18 +128,20 @@ func (b *Backend[K, V]) Evict(key K) (Element[V], bool) {
 }
 
 // Delete a record from the backend map.
-// When half of the records are deleted, the map is reallocated.
+// When capacity is 0 and half of the records are deleted, the map will be eventually reallocated.
 func (b *Backend[K, V]) Delete(key K) {
+	if b.cap == 0 {
+		if n := len(b.xmap); n >= b.reallocThreshold || b.largestLen > 0 && n > b.largestLen {
+			b.largestLen = n
+		}
+	}
+
 	delete(b.xmap, key)
 
-	if n := len(b.xmap); n > b.largestLen {
-		b.largestLen = n
-	} else if n <= b.largestLen/2 {
-		m := make(RecordMap[K, V], n)
-		for k, v := range b.xmap {
-			m[k] = v
-		}
-		b.xmap = m
+	if b.largestLen > 0 && len(b.xmap) <= b.largestLen/2 {
+		b.largestLen = 0
+		b.needRealloc = true
+		b.timer.Reset(0)
 	}
 }
 
@@ -161,19 +171,19 @@ func (b *Backend[K, V]) startGCOnce() {
 					b.timer.Stop()
 					return
 				case now := <-b.timer.C:
-					b.runGC(now.UnixNano())
+					b.RunGC(now.UnixNano())
 				}
 			}
 		}()
 	})
 }
 
-func (b *Backend[K, V]) runGC(now int64) {
+// RunGC runs map cleanup.
+func (b *Backend[K, V]) RunGC(now int64) {
 	b.Lock()
 	defer b.Unlock()
 
 	var overflowed map[Element[V]]bool
-
 	if n := b.overflow(); n > 0 {
 		overflowed = make(map[Element[V]]bool, n)
 
@@ -186,7 +196,22 @@ func (b *Backend[K, V]) runGC(now int64) {
 		}
 	}
 
+	var newMap RecordMap[K, V]
+	if b.needRealloc {
+		b.needRealloc = false
+		newMap = make(RecordMap[K, V], len(b.xmap)-len(overflowed))
+		defer func() {
+			b.xmap = newMap
+		}()
+	}
+
 	var earliest int64
+	defer func() {
+		b.earliestExpireAt = earliest
+		if earliest > 0 {
+			b.timer.Reset(time.Duration(earliest - now))
+		}
+	}()
 
 	for key, elem := range b.xmap {
 		if elem.Value.Initialized.Load() {
@@ -194,18 +219,23 @@ func (b *Backend[K, V]) runGC(now int64) {
 				delete(overflowed, elem)
 				b.Delete(key)
 				b.list.Remove(elem)
-			} else if elem.Value.Deadline > 0 && elem.Value.Deadline < now {
+				continue
+			}
+
+			if elem.Value.Deadline > 0 && elem.Value.Deadline < now {
 				b.Delete(key)
 				b.list.Remove(elem)
-			} else if elem.Value.Deadline > 0 && (earliest == 0 || elem.Value.Deadline < earliest) {
+				continue
+			}
+
+			if elem.Value.Deadline > 0 && (earliest == 0 || elem.Value.Deadline < earliest) {
 				earliest = elem.Value.Deadline
 			}
 		}
-	}
 
-	b.earliestExpireAt = earliest
-	if earliest > 0 {
-		b.timer.Reset(time.Duration(earliest - now))
+		if newMap != nil {
+			newMap[key] = elem
+		}
 	}
 }
 
