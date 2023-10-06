@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/mgnsk/evcache/v3/internal/backend"
-	"github.com/mgnsk/list"
 )
 
 // Cache is an in-memory TTL cache with optional capacity.
@@ -35,13 +34,13 @@ func New[K comparable, V any](capacity int) *Cache[K, V] {
 
 // Exists returns whether a value in the cache exists for key.
 func (c *Cache[K, V]) Exists(key K) bool {
-	elem, ok := c.backend.Load(key)
-	return ok && elem.Value.Initialized.Load()
+	_, ok := c.backend.Load(key)
+	return ok
 }
 
 // Get returns the value stored in the cache for key.
 func (c *Cache[K, V]) Get(key K) (value V, exists bool) {
-	if elem, ok := c.backend.Load(key); ok && elem.Value.Initialized.Load() {
+	if elem, ok := c.backend.Load(key); ok {
 		return elem.Value.Value, true
 	}
 
@@ -55,10 +54,7 @@ func (c *Cache[K, V]) Get(key K) (value V, exists bool) {
 // Range is allowed to modify the cache.
 func (c *Cache[K, V]) Range(f func(key K, value V) bool) {
 	c.backend.Range(func(key K, elem backend.Element[V]) bool {
-		if elem.Value.Initialized.Load() {
-			return f(key, elem.Value.Value)
-		}
-		return true
+		return f(key, elem.Value.Value)
 	})
 }
 
@@ -111,25 +107,25 @@ func (c *Cache[K, V]) Fetch(key K, ttl time.Duration, f func() (V, error)) (valu
 
 // TryFetch is like Fetch but allows the TTL to be returned alongside the value from callback.
 func (c *Cache[K, V]) TryFetch(key K, f func() (V, time.Duration, error)) (value V, err error) {
-	new, ok := c.pool.Get().(backend.Element[V])
+	newRec, ok := c.pool.Get().(backend.Element[V])
 	if !ok {
-		new = list.NewElement(backend.Record[V]{})
+		newRec = backend.NewElement(*new(V))
 	}
 
-	new.Value.Wg.Add(1)
-	defer new.Value.Wg.Done()
+	newRec.Value.Wg.Add(1)
+	defer newRec.Value.Wg.Done()
 
 loadOrStore:
-	if elem, loaded := c.backend.LoadOrStore(key, new); loaded {
+	if elem, loaded := c.backend.LoadOrStore(key, newRec); loaded {
 		if elem.Value.Initialized.Load() {
-			c.pool.Put(new)
+			c.pool.Put(newRec)
 			return elem.Value.Value, nil
 		}
 
 		elem.Value.Wg.Wait()
 
 		if elem.Value.Initialized.Load() {
-			c.pool.Put(new)
+			c.pool.Put(newRec)
 			return elem.Value.Value, nil
 		}
 
@@ -152,12 +148,12 @@ loadOrStore:
 		return zero, err
 	}
 
-	new.Value.Value = value
+	newRec.Value.Value = value
 	if ttl > 0 {
-		new.Value.Deadline = time.Now().Add(ttl).UnixNano()
+		newRec.Value.Deadline = time.Now().Add(ttl).UnixNano()
 	}
 
-	c.backend.PushBack(new, ttl)
+	c.backend.Initialize(key, ttl)
 
 	return value, nil
 }

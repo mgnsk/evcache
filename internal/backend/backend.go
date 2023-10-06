@@ -27,7 +27,7 @@ func NewElement[V any](v V) Element[V] {
 	return list.NewElement(Record[V]{Value: v})
 }
 
-// RecordMap is the cache's record map.
+// RecordMap is the cache's element map.
 type RecordMap[K comparable, V any] map[K]Element[V]
 
 // Backend implements cache backend.
@@ -65,7 +65,7 @@ func (b *Backend[K, V]) Close() error {
 	return nil
 }
 
-// Len returns the number of stored records.
+// Len returns the number of initialized elements.
 func (b *Backend[K, V]) Len() int {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -73,16 +73,20 @@ func (b *Backend[K, V]) Len() int {
 	return b.list.Len()
 }
 
-// Load an element.
+// Load an initialized element.
 func (b *Backend[K, V]) Load(key K) (value Element[V], ok bool) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	r, ok := b.xmap[key]
-	return r, ok
+	if r, ok := b.xmap[key]; ok && r.Value.Initialized.Load() {
+		return r, true
+	}
+
+	return nil, false
 }
 
 // LoadOrStore loads or stores an element.
+// A loaded element may be either uninitialized or initialized.
 func (b *Backend[K, V]) LoadOrStore(key K, new Element[V]) (old Element[V], loaded bool) {
 	b.mu.RLock()
 	if elem, ok := b.xmap[key]; ok {
@@ -103,7 +107,7 @@ func (b *Backend[K, V]) LoadOrStore(key K, new Element[V]) (old Element[V], load
 	return new, false
 }
 
-// Range iterates over cache records in no particular order.
+// Range iterates over initialized cache elements in no particular order.
 func (b *Backend[K, V]) Range(f func(key K, r Element[V]) bool) {
 	b.mu.RLock()
 	keys := make([]K, 0, len(b.xmap))
@@ -116,13 +120,13 @@ func (b *Backend[K, V]) Range(f func(key K, r Element[V]) bool) {
 		b.mu.RLock()
 		elem, ok := b.xmap[key]
 		b.mu.RUnlock()
-		if ok && !f(key, elem) {
+		if ok && elem.Value.Initialized.Load() && !f(key, elem) {
 			return
 		}
 	}
 }
 
-// Evict a record.
+// Evict an element.
 func (b *Backend[K, V]) Evict(key K) (Element[V], bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -136,8 +140,7 @@ func (b *Backend[K, V]) Evict(key K) (Element[V], bool) {
 	return nil, false
 }
 
-// Delete a record from the backend map.
-// When capacity is 0 and half of the records are deleted, the map will be eventually reallocated.
+// Delete an element from the backend map.
 func (b *Backend[K, V]) Delete(key K) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -161,13 +164,20 @@ func (b *Backend[K, V]) deleteLocked(key K) {
 	}
 }
 
-// PushBack appends a new record to backend.
-func (b *Backend[K, V]) PushBack(elem Element[V], ttl time.Duration) {
+// Initialize a previously stored uninitialized element.
+func (b *Backend[K, V]) Initialize(key K, ttl time.Duration) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	elem, ok := b.xmap[key]
+	if !ok {
+		panic("Initialize: expected element to exist")
+	}
+
 	b.list.PushBack(elem)
-	elem.Value.Initialized.Store(true)
+	if !elem.Value.Initialized.CompareAndSwap(false, true) {
+		panic("Initialize: expected an uninitialized element")
+	}
 
 	if n := b.overflow(); n > 0 {
 		b.startGCOnce()
