@@ -35,18 +35,12 @@ func New[K comparable, V any](capacity int) *Cache[K, V] {
 
 // Exists returns whether a value in the cache exists for key.
 func (c *Cache[K, V]) Exists(key K) bool {
-	c.backend.RLock()
-	defer c.backend.RUnlock()
-
 	elem, ok := c.backend.Load(key)
 	return ok && elem.Value.Initialized.Load()
 }
 
 // Get returns the value stored in the cache for key.
 func (c *Cache[K, V]) Get(key K) (value V, exists bool) {
-	c.backend.RLock()
-	defer c.backend.RUnlock()
-
 	if elem, ok := c.backend.Load(key); ok && elem.Value.Initialized.Load() {
 		return elem.Value.Value, true
 	}
@@ -70,17 +64,11 @@ func (c *Cache[K, V]) Range(f func(key K, value V) bool) {
 
 // Len returns the number of keys in the cache.
 func (c *Cache[K, V]) Len() int {
-	c.backend.Lock()
-	defer c.backend.Unlock()
-
 	return c.backend.Len()
 }
 
 // Evict a key and return its value.
 func (c *Cache[K, V]) Evict(key K) (value V, ok bool) {
-	c.backend.Lock()
-	defer c.backend.Unlock()
-
 	if elem, ok := c.backend.Evict(key); ok {
 		return elem.Value.Value, true
 	}
@@ -150,9 +138,6 @@ loadOrStore:
 
 	defer func() {
 		if r := recover(); r != nil {
-			c.backend.Lock()
-			defer c.backend.Unlock()
-
 			c.backend.Delete(key)
 
 			panic(r)
@@ -161,9 +146,6 @@ loadOrStore:
 
 	value, ttl, err := f()
 	if err != nil {
-		c.backend.Lock()
-		defer c.backend.Unlock()
-
 		c.backend.Delete(key)
 
 		var zero V
@@ -174,9 +156,6 @@ loadOrStore:
 	if ttl > 0 {
 		new.Value.Deadline = time.Now().Add(ttl).UnixNano()
 	}
-
-	c.backend.Lock()
-	defer c.backend.Unlock()
 
 	c.backend.PushBack(new, ttl)
 

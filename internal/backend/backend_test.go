@@ -17,9 +17,7 @@ func newBackend(size int) *backend.Backend[int, int] {
 	for i := 0; i < size; i++ {
 		elem := backend.NewElement(i)
 		b.LoadOrStore(i, elem)
-		b.Lock()
 		b.PushBack(elem, 0)
-		b.Unlock()
 	}
 
 	return b

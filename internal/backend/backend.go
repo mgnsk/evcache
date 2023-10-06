@@ -42,7 +42,7 @@ type Backend[K comparable, V any] struct {
 	largestLen       int // the map has at least this capacity
 	needRealloc      bool
 	once             sync.Once
-	sync.RWMutex
+	mu               sync.RWMutex
 }
 
 // NewBackend creates a new cache backend.
@@ -67,26 +67,32 @@ func (b *Backend[K, V]) Close() error {
 
 // Len returns the number of stored records.
 func (b *Backend[K, V]) Len() int {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
 	return b.list.Len()
 }
 
 // Load an element.
 func (b *Backend[K, V]) Load(key K) (value Element[V], ok bool) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
 	r, ok := b.xmap[key]
 	return r, ok
 }
 
 // LoadOrStore loads or stores an element.
 func (b *Backend[K, V]) LoadOrStore(key K, new Element[V]) (old Element[V], loaded bool) {
-	b.RLock()
+	b.mu.RLock()
 	if elem, ok := b.xmap[key]; ok {
-		b.RUnlock()
+		b.mu.RUnlock()
 		return elem, true
 	}
-	b.RUnlock()
+	b.mu.RUnlock()
 
-	b.Lock()
-	defer b.Unlock()
+	b.mu.Lock()
+	defer b.mu.Unlock()
 
 	if elem, ok := b.xmap[key]; ok {
 		return elem, true
@@ -99,17 +105,17 @@ func (b *Backend[K, V]) LoadOrStore(key K, new Element[V]) (old Element[V], load
 
 // Range iterates over cache records in no particular order.
 func (b *Backend[K, V]) Range(f func(key K, r Element[V]) bool) {
-	b.RLock()
+	b.mu.RLock()
 	keys := make([]K, 0, len(b.xmap))
 	for k := range b.xmap {
 		keys = append(keys, k)
 	}
-	b.RUnlock()
+	b.mu.RUnlock()
 
 	for _, key := range keys {
-		b.RLock()
+		b.mu.RLock()
 		elem, ok := b.xmap[key]
-		b.RUnlock()
+		b.mu.RUnlock()
 		if ok && !f(key, elem) {
 			return
 		}
@@ -118,8 +124,11 @@ func (b *Backend[K, V]) Range(f func(key K, r Element[V]) bool) {
 
 // Evict a record.
 func (b *Backend[K, V]) Evict(key K) (Element[V], bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	if elem, ok := b.xmap[key]; ok && elem.Value.Initialized.Load() {
-		b.Delete(key)
+		b.deleteLocked(key)
 		b.list.Remove(elem)
 		return elem, true
 	}
@@ -130,6 +139,13 @@ func (b *Backend[K, V]) Evict(key K) (Element[V], bool) {
 // Delete a record from the backend map.
 // When capacity is 0 and half of the records are deleted, the map will be eventually reallocated.
 func (b *Backend[K, V]) Delete(key K) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.deleteLocked(key)
+}
+
+func (b *Backend[K, V]) deleteLocked(key K) {
 	if b.cap == 0 {
 		if n := len(b.xmap); n >= b.reallocThreshold || b.largestLen > 0 && n > b.largestLen {
 			b.largestLen = n
@@ -147,6 +163,9 @@ func (b *Backend[K, V]) Delete(key K) {
 
 // PushBack appends a new record to backend.
 func (b *Backend[K, V]) PushBack(elem Element[V], ttl time.Duration) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	b.list.PushBack(elem)
 	elem.Value.Initialized.Store(true)
 
@@ -180,8 +199,8 @@ func (b *Backend[K, V]) startGCOnce() {
 
 // RunGC runs map cleanup.
 func (b *Backend[K, V]) RunGC(now int64) {
-	b.Lock()
-	defer b.Unlock()
+	b.mu.Lock()
+	defer b.mu.Unlock()
 
 	var overflowed map[Element[V]]bool
 	if n := b.overflow(); n > 0 {
@@ -217,13 +236,13 @@ func (b *Backend[K, V]) RunGC(now int64) {
 		if elem.Value.Initialized.Load() {
 			if len(overflowed) > 0 && overflowed[elem] {
 				delete(overflowed, elem)
-				b.Delete(key)
+				b.deleteLocked(key)
 				b.list.Remove(elem)
 				continue
 			}
 
 			if elem.Value.Deadline > 0 && elem.Value.Deadline < now {
-				b.Delete(key)
+				b.deleteLocked(key)
 				b.list.Remove(elem)
 				continue
 			}
