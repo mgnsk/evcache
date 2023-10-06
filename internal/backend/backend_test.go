@@ -60,8 +60,9 @@ func TestUnlimitedCapacityMapShrinkUninitializedRecords(t *testing.T) {
 		g.Expect(getInitializedMapLen(b)).To(Equal(size - 1))
 
 		// Store uninitialized record.
-		elem := backend.NewElement(size - 1)
+		elem := b.Reserve()
 		b.LoadOrStore(size-1, elem)
+		b.Release(elem)
 
 		g.Expect(b.Len()).To(Equal(size-1), "list len only initialized elements")
 		g.Expect(getInitializedMapLen(b)).To(Equal(size-1), "map len only initialized elements")
@@ -85,9 +86,8 @@ func newBackend(size int) *backend.Backend[int, int] {
 	b := backend.NewBackend[int, int](0)
 
 	for i := 0; i < size; i++ {
-		elem := backend.NewElement(i)
-		b.LoadOrStore(i, elem)
-		b.Initialize(i, 0)
+		b.LoadOrStore(i, b.Reserve())
+		b.Initialize(i, i, 0)
 	}
 
 	return b

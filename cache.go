@@ -5,7 +5,6 @@ package evcache
 
 import (
 	"runtime"
-	"sync"
 	"time"
 
 	"github.com/mgnsk/evcache/v3/internal/backend"
@@ -14,7 +13,6 @@ import (
 // Cache is an in-memory TTL cache with optional capacity.
 type Cache[K comparable, V any] struct {
 	backend *backend.Backend[K, V]
-	pool    sync.Pool
 }
 
 // New creates an empty cache.
@@ -41,7 +39,7 @@ func (c *Cache[K, V]) Exists(key K) bool {
 // Get returns the value stored in the cache for key.
 func (c *Cache[K, V]) Get(key K) (value V, exists bool) {
 	if elem, ok := c.backend.Load(key); ok {
-		return elem.Value.Value, true
+		return elem.Value.Value(), true
 	}
 
 	var zero V
@@ -54,7 +52,7 @@ func (c *Cache[K, V]) Get(key K) (value V, exists bool) {
 // Range is allowed to modify the cache.
 func (c *Cache[K, V]) Range(f func(key K, value V) bool) {
 	c.backend.Range(func(key K, elem backend.Element[V]) bool {
-		return f(key, elem.Value.Value)
+		return f(key, elem.Value.Value())
 	})
 }
 
@@ -66,7 +64,7 @@ func (c *Cache[K, V]) Len() int {
 // Evict a key and return its value.
 func (c *Cache[K, V]) Evict(key K) (value V, ok bool) {
 	if elem, ok := c.backend.Evict(key); ok {
-		return elem.Value.Value, true
+		return elem.Value.Value(), true
 	}
 
 	var zero V
@@ -107,27 +105,16 @@ func (c *Cache[K, V]) Fetch(key K, ttl time.Duration, f func() (V, error)) (valu
 
 // TryFetch is like Fetch but allows the TTL to be returned alongside the value from callback.
 func (c *Cache[K, V]) TryFetch(key K, f func() (V, time.Duration, error)) (value V, err error) {
-	newRec, ok := c.pool.Get().(backend.Element[V])
-	if !ok {
-		newRec = backend.NewElement(*new(V))
-	}
-
-	newRec.Value.Wg.Add(1)
-	defer newRec.Value.Wg.Done()
+	newElem := c.backend.Reserve()
 
 loadOrStore:
-	if elem, loaded := c.backend.LoadOrStore(key, newRec); loaded {
-		if elem.Value.Initialized.Load() {
-			c.pool.Put(newRec)
-			return elem.Value.Value, nil
+	if elem, initialized, loaded := c.backend.LoadOrStore(key, newElem); loaded {
+		if initialized {
+			c.backend.Release(newElem)
+			return elem.Value.Value(), nil
 		}
 
-		elem.Value.Wg.Wait()
-
-		if elem.Value.Initialized.Load() {
-			c.pool.Put(newRec)
-			return elem.Value.Value, nil
-		}
+		elem.Value.Wait()
 
 		goto loadOrStore
 	}
@@ -135,6 +122,7 @@ loadOrStore:
 	defer func() {
 		if r := recover(); r != nil {
 			c.backend.Delete(key)
+			c.backend.Release(newElem)
 
 			panic(r)
 		}
@@ -143,17 +131,13 @@ loadOrStore:
 	value, ttl, err := f()
 	if err != nil {
 		c.backend.Delete(key)
+		c.backend.Release(newElem)
 
 		var zero V
 		return zero, err
 	}
 
-	newRec.Value.Value = value
-	if ttl > 0 {
-		newRec.Value.Deadline = time.Now().Add(ttl).UnixNano()
-	}
-
-	c.backend.Initialize(key, ttl)
+	c.backend.Initialize(key, value, ttl)
 
 	return value, nil
 }

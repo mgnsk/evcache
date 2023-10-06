@@ -11,21 +11,23 @@ import (
 	"github.com/mgnsk/list"
 )
 
-// Record is a cache record.
-type Record[V any] struct {
-	Value       V
-	Deadline    int64
-	Wg          sync.WaitGroup
-	Initialized atomic.Bool
+type record[V any] struct {
+	value       V
+	deadline    int64
+	wg          sync.WaitGroup
+	initialized atomic.Bool
+}
+
+func (r *record[V]) Value() V {
+	return r.value
+}
+
+func (r *record[V]) Wait() {
+	r.wg.Wait()
 }
 
 // Element is the cache element.
-type Element[V any] *list.Element[Record[V]]
-
-// NewElement returns a new cache element.
-func NewElement[V any](v V) Element[V] {
-	return list.NewElement(Record[V]{Value: v})
-}
+type Element[V any] *list.Element[record[V]]
 
 // RecordMap is the cache's element map.
 type RecordMap[K comparable, V any] map[K]Element[V]
@@ -35,7 +37,8 @@ type Backend[K comparable, V any] struct {
 	timer            *time.Timer
 	done             chan struct{}
 	xmap             RecordMap[K, V]
-	list             list.List[Record[V]]
+	list             list.List[record[V]]
+	pool             sync.Pool
 	earliestExpireAt int64
 	cap              int
 	reallocThreshold int // if map hits this size and then shrinks by half, it is reallocated
@@ -73,12 +76,64 @@ func (b *Backend[K, V]) Len() int {
 	return b.list.Len()
 }
 
+// Reserve a new uninitialized element.
+func (b *Backend[K, V]) Reserve() Element[V] {
+	elem, ok := b.pool.Get().(Element[V])
+	if !ok {
+		elem = list.NewElement(record[V]{value: *new(V)})
+	}
+
+	elem.Value.wg.Add(1)
+
+	return elem
+}
+
+// Release a reserved uninitialized element.
+func (b *Backend[K, V]) Release(elem Element[V]) {
+	elem.Value.wg.Done()
+	b.pool.Put(elem)
+}
+
+// Initialize a previously stored uninitialized element.
+func (b *Backend[K, V]) Initialize(key K, value V, ttl time.Duration) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	elem, ok := b.xmap[key]
+	if !ok {
+		panic("Initialize: expected element to exist")
+	}
+
+	elem.Value.value = value
+	if ttl > 0 {
+		elem.Value.deadline = time.Now().Add(ttl).UnixNano()
+	}
+
+	b.list.PushBack(elem)
+	if !elem.Value.initialized.CompareAndSwap(false, true) {
+		panic("Initialize: expected an uninitialized element")
+	}
+
+	defer elem.Value.wg.Done()
+
+	if n := b.overflow(); n > 0 {
+		b.startGCOnce()
+		b.timer.Reset(0)
+	} else if elem.Value.deadline > 0 {
+		b.startGCOnce()
+		if b.earliestExpireAt == 0 || elem.Value.deadline < b.earliestExpireAt {
+			b.earliestExpireAt = elem.Value.deadline
+			b.timer.Reset(ttl)
+		}
+	}
+}
+
 // Load an initialized element.
 func (b *Backend[K, V]) Load(key K) (value Element[V], ok bool) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	if r, ok := b.xmap[key]; ok && r.Value.Initialized.Load() {
+	if r, ok := b.xmap[key]; ok && r.Value.initialized.Load() {
 		return r, true
 	}
 
@@ -86,12 +141,11 @@ func (b *Backend[K, V]) Load(key K) (value Element[V], ok bool) {
 }
 
 // LoadOrStore loads or stores an element.
-// A loaded element may be either uninitialized or initialized.
-func (b *Backend[K, V]) LoadOrStore(key K, new Element[V]) (old Element[V], loaded bool) {
+func (b *Backend[K, V]) LoadOrStore(key K, new Element[V]) (old Element[V], initialized, loaded bool) {
 	b.mu.RLock()
 	if elem, ok := b.xmap[key]; ok {
 		b.mu.RUnlock()
-		return elem, true
+		return elem, elem.Value.initialized.Load(), true
 	}
 	b.mu.RUnlock()
 
@@ -99,12 +153,12 @@ func (b *Backend[K, V]) LoadOrStore(key K, new Element[V]) (old Element[V], load
 	defer b.mu.Unlock()
 
 	if elem, ok := b.xmap[key]; ok {
-		return elem, true
+		return elem, elem.Value.initialized.Load(), true
 	}
 
 	b.xmap[key] = new
 
-	return new, false
+	return new, false, false
 }
 
 // Range iterates over initialized cache elements in no particular order.
@@ -120,7 +174,7 @@ func (b *Backend[K, V]) Range(f func(key K, r Element[V]) bool) {
 		b.mu.RLock()
 		elem, ok := b.xmap[key]
 		b.mu.RUnlock()
-		if ok && elem.Value.Initialized.Load() && !f(key, elem) {
+		if ok && elem.Value.initialized.Load() && !f(key, elem) {
 			return
 		}
 	}
@@ -131,7 +185,7 @@ func (b *Backend[K, V]) Evict(key K) (Element[V], bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if elem, ok := b.xmap[key]; ok && elem.Value.Initialized.Load() {
+	if elem, ok := b.xmap[key]; ok && elem.Value.initialized.Load() {
 		b.deleteLocked(key)
 		b.list.Remove(elem)
 		return elem, true
@@ -161,33 +215,6 @@ func (b *Backend[K, V]) deleteLocked(key K) {
 		b.largestLen = 0
 		b.needRealloc = true
 		b.timer.Reset(0)
-	}
-}
-
-// Initialize a previously stored uninitialized element.
-func (b *Backend[K, V]) Initialize(key K, ttl time.Duration) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	elem, ok := b.xmap[key]
-	if !ok {
-		panic("Initialize: expected element to exist")
-	}
-
-	b.list.PushBack(elem)
-	if !elem.Value.Initialized.CompareAndSwap(false, true) {
-		panic("Initialize: expected an uninitialized element")
-	}
-
-	if n := b.overflow(); n > 0 {
-		b.startGCOnce()
-		b.timer.Reset(0)
-	} else if elem.Value.Deadline > 0 {
-		b.startGCOnce()
-		if b.earliestExpireAt == 0 || elem.Value.Deadline < b.earliestExpireAt {
-			b.earliestExpireAt = elem.Value.Deadline
-			b.timer.Reset(ttl)
-		}
 	}
 }
 
@@ -243,7 +270,7 @@ func (b *Backend[K, V]) RunGC(now int64) {
 	}()
 
 	for key, elem := range b.xmap {
-		if elem.Value.Initialized.Load() {
+		if elem.Value.initialized.Load() {
 			if len(overflowed) > 0 && overflowed[elem] {
 				delete(overflowed, elem)
 				b.deleteLocked(key)
@@ -251,14 +278,14 @@ func (b *Backend[K, V]) RunGC(now int64) {
 				continue
 			}
 
-			if elem.Value.Deadline > 0 && elem.Value.Deadline < now {
+			if elem.Value.deadline > 0 && elem.Value.deadline < now {
 				b.deleteLocked(key)
 				b.list.Remove(elem)
 				continue
 			}
 
-			if elem.Value.Deadline > 0 && (earliest == 0 || elem.Value.Deadline < earliest) {
-				earliest = elem.Value.Deadline
+			if elem.Value.deadline > 0 && (earliest == 0 || elem.Value.deadline < earliest) {
+				earliest = elem.Value.deadline
 			}
 		}
 
