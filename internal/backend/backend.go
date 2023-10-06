@@ -22,6 +22,7 @@ func (r *record[V]) Value() V {
 	return r.value
 }
 
+// Wait for the record to be either released or discarded.
 func (r *record[V]) Wait() {
 	r.wg.Wait()
 }
@@ -92,6 +93,11 @@ func (b *Backend[K, V]) Reserve() Element[V] {
 func (b *Backend[K, V]) Release(elem Element[V]) {
 	elem.Value.wg.Done()
 	b.pool.Put(elem)
+}
+
+// Discard a reserved uninitialized element.
+func (*Backend[K, V]) Discard(elem Element[V]) {
+	elem.Value.wg.Done()
 }
 
 // Initialize a previously stored uninitialized element.
