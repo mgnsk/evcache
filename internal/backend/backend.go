@@ -11,6 +11,9 @@ import (
 	"github.com/mgnsk/list"
 )
 
+// If cap is 0, map hits this size and then shrinks by half, it is reallocated.
+const reallocThreshold = 100000
+
 type record[V any] struct {
 	value       V
 	deadline    int64
@@ -42,7 +45,6 @@ type Backend[K comparable, V any] struct {
 	pool             sync.Pool
 	earliestExpireAt int64
 	cap              int
-	reallocThreshold int // if map hits this size and then shrinks by half, it is reallocated
 	largestLen       int // the map has at least this capacity
 	needRealloc      bool
 	once             sync.Once
@@ -55,11 +57,10 @@ func NewBackend[K comparable, V any](capacity int) *Backend[K, V] {
 	<-t.C
 
 	return &Backend[K, V]{
-		timer:            t,
-		done:             make(chan struct{}),
-		xmap:             make(RecordMap[K, V], capacity),
-		cap:              capacity,
-		reallocThreshold: 100000, // 100000 * pointer size
+		timer: t,
+		done:  make(chan struct{}),
+		xmap:  make(RecordMap[K, V], capacity),
+		cap:   capacity,
 	}
 }
 
@@ -201,6 +202,7 @@ func (b *Backend[K, V]) Evict(key K) (Element[V], bool) {
 }
 
 // Delete an element from the backend map.
+// The element must be uninitialized.
 func (b *Backend[K, V]) Delete(key K) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -210,7 +212,7 @@ func (b *Backend[K, V]) Delete(key K) {
 
 func (b *Backend[K, V]) deleteLocked(key K) {
 	if b.cap == 0 {
-		if n := len(b.xmap); n >= b.reallocThreshold || b.largestLen > 0 && n > b.largestLen {
+		if n := len(b.xmap); n >= reallocThreshold || b.largestLen > 0 && n > b.largestLen {
 			b.largestLen = n
 		}
 	}
