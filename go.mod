@@ -3,8 +3,8 @@ module github.com/mgnsk/evcache/v3
 go 1.19
 
 require (
-	github.com/mgnsk/list v0.0.0-20230905211842-36eaa80d0e17
-	github.com/onsi/gomega v1.27.10
+	github.com/mgnsk/ringlist v0.0.0-20231016175938-072bd9da3594
+	github.com/onsi/gomega v1.28.0
 )
 
 require (

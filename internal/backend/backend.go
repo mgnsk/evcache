@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/mgnsk/list"
+	"github.com/mgnsk/ringlist"
 )
 
 // If cap is 0, map hits this size and then shrinks by half, it is reallocated.
@@ -31,7 +31,7 @@ func (r *record[V]) Wait() {
 }
 
 // Element is the cache element.
-type Element[V any] *list.Element[record[V]]
+type Element[V any] *ringlist.Element[record[V]]
 
 // RecordMap is the cache's element map.
 type RecordMap[K comparable, V any] map[K]Element[V]
@@ -41,7 +41,7 @@ type Backend[K comparable, V any] struct {
 	timer            *time.Timer
 	done             chan struct{}
 	xmap             RecordMap[K, V]
-	list             list.List[record[V]]
+	list             ringlist.List[record[V]]
 	pool             sync.Pool
 	earliestExpireAt int64
 	cap              int
@@ -82,7 +82,7 @@ func (b *Backend[K, V]) Len() int {
 func (b *Backend[K, V]) Reserve() Element[V] {
 	elem, ok := b.pool.Get().(Element[V])
 	if !ok {
-		elem = list.NewElement(record[V]{value: *new(V)})
+		elem = ringlist.NewElement(record[V]{value: *new(V)})
 	}
 
 	elem.Value.wg.Add(1)
