@@ -5,23 +5,21 @@ import (
 	"time"
 
 	"github.com/mgnsk/evcache/v3/internal/backend"
-	. "github.com/onsi/gomega"
+	. "github.com/mgnsk/evcache/v3/internal/testing"
 )
 
 func TestMapShrinkUninitializedRecords(t *testing.T) {
 	t.Run("realloc", func(t *testing.T) {
-		g := NewWithT(t)
-
 		b := newBackend(size - 1)
-		g.Expect(b.Len()).To(Equal(size - 1))
-		g.Expect(getInitializedMapLen(b)).To(Equal(size - 1))
+		AssertEqual(t, b.Len(), size-1)
+		AssertEqual(t, getInitializedMapLen(b), size-1)
 
 		// Store uninitialized record.
 		elem := b.Reserve()
 		b.LoadOrStore(size-1, elem)
 
-		g.Expect(b.Len()).To(Equal(size-1), "list len only initialized elements")
-		g.Expect(getInitializedMapLen(b)).To(Equal(size-1), "map len only initialized elements")
+		AssertEqual(t, b.Len(), size-1)
+		AssertEqual(t, b.Len(), size-1)
 
 		// Evict half of records.
 		for i := 0; i < size/2; i++ {
@@ -33,8 +31,8 @@ func TestMapShrinkUninitializedRecords(t *testing.T) {
 		// Initialize the record.
 		b.Initialize(size-1, 0, 0)
 
-		g.Expect(b.Len()).To(Equal((size / 2)), "list len only initialized elements")
-		g.Expect(getInitializedMapLen(b)).To(Equal((size / 2)), "map len only initialized elements")
+		AssertEqual(t, b.Len(), size/2)
+		AssertEqual(t, b.Len(), size/2)
 	})
 }
 

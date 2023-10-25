@@ -10,30 +10,26 @@ import (
 	"time"
 
 	"github.com/mgnsk/evcache/v3"
-	. "github.com/onsi/gomega"
+	. "github.com/mgnsk/evcache/v3/internal/testing"
 )
 
 func TestLoadOrStoreNotExists(t *testing.T) {
-	g := NewWithT(t)
-
 	c := evcache.New[string, int](0)
 
 	_, loaded := c.LoadOrStore("key", 0, 1)
-	g.Expect(loaded).To(BeFalse())
-	g.Expect(c.Exists("key")).To(BeTrue())
-	g.Expect(c.Len()).To(Equal(1))
+	AssertEqual(t, loaded, false)
+	AssertEqual(t, c.Exists("key"), true)
+	AssertEqual(t, c.Len(), 1)
 }
 
 func TestLoadOrStoreExists(t *testing.T) {
-	g := NewWithT(t)
-
 	c := evcache.New[string, int](0)
 
 	c.LoadOrStore("key", 0, 1)
 
 	v, loaded := c.LoadOrStore("key", 0, 2)
-	g.Expect(loaded).To(BeTrue())
-	g.Expect(v).To(Equal(1))
+	AssertEqual(t, loaded, true)
+	AssertEqual(t, v, 1)
 }
 
 func TestFetchCallbackBlocks(t *testing.T) {
@@ -54,62 +50,50 @@ func TestFetchCallbackBlocks(t *testing.T) {
 	<-fetchStarted
 
 	t.Run("non-blocking Exists", func(t *testing.T) {
-		g := NewWithT(t)
-
-		g.Expect(c.Exists("key")).To(BeFalse())
+		AssertEqual(t, c.Exists("key"), false)
 	})
 
 	t.Run("non-blocking Evict", func(t *testing.T) {
-		g := NewWithT(t)
-
 		_, ok := c.Evict("key")
-		g.Expect(ok).To(BeFalse())
+		AssertEqual(t, ok, false)
 	})
 
 	t.Run("non-blocking Get", func(t *testing.T) {
-		g := NewWithT(t)
-
 		_, ok := c.Get("key")
-		g.Expect(ok).To(BeFalse())
+		AssertEqual(t, ok, false)
 	})
 
 	t.Run("autoexpiry for other keys works", func(t *testing.T) {
-		g := NewWithT(t)
-
 		c.LoadOrStore("key1", time.Millisecond, "value1")
 
-		g.Eventually(func() bool {
-			return c.Exists("key1")
-		}).Should(BeFalse())
+		AssertEventuallyTrue(t, func() bool {
+			return !c.Exists("key1")
+		})
 	})
 
 	t.Run("non-blocking Range", func(t *testing.T) {
-		g := NewWithT(t)
-
 		c.LoadOrStore("key1", 0, "value1")
 
 		n := 0
 		c.Range(func(key, value string) bool {
 			if key == "key" {
-				g.Fail("expected to skip key")
+				t.Fatal("expected to skip key")
 			}
 
 			v, ok := c.Evict(key)
-			g.Expect(ok).To(BeTrue())
-			g.Expect(v).To(Equal(value))
-			g.Expect(c.Len()).To(Equal(0))
+			AssertEqual(t, ok, true)
+			AssertEqual(t, v, value)
+			AssertEqual(t, c.Len(), 0)
 
 			n++
 			return true
 		})
 
-		g.Expect(n).To(Equal(1))
+		AssertEqual(t, n, 1)
 	})
 }
 
 func TestFetchCallbackPanic(t *testing.T) {
-	g := NewWithT(t)
-
 	c := evcache.New[string, string](0)
 
 	func() {
@@ -127,14 +111,12 @@ func TestFetchCallbackPanic(t *testing.T) {
 		return "new value", nil
 	})
 
-	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(v).To(Equal("new value"))
+	AssertSuccess(t, err)
+	AssertEqual(t, v, "new value")
 }
 
 func TestConcurrentFetch(t *testing.T) {
 	t.Run("returns error", func(t *testing.T) {
-		g := NewWithT(t)
-
 		c := evcache.New[string, string](0)
 
 		errCh := make(chan error)
@@ -154,13 +136,11 @@ func TestConcurrentFetch(t *testing.T) {
 			return "value", nil
 		})
 
-		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(v).To(Equal("value"))
+		AssertSuccess(t, err)
+		AssertEqual(t, v, "value")
 	})
 
 	t.Run("returns value", func(t *testing.T) {
-		g := NewWithT(t)
-
 		c := evcache.New[string, string](0)
 
 		valueCh := make(chan string)
@@ -180,27 +160,24 @@ func TestConcurrentFetch(t *testing.T) {
 			return "value1", nil
 		})
 
-		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(v).To(Equal("value"))
+		AssertSuccess(t, err)
+		AssertEqual(t, v, "value")
 	})
 }
 
 func TestEvict(t *testing.T) {
-	g := NewWithT(t)
-
 	c := evcache.New[string, string](0)
 
 	c.LoadOrStore("key", 0, "value")
 
 	v, ok := c.Evict("key")
-	g.Expect(ok).To(BeTrue())
-	g.Expect(v).To(Equal("value"))
-	g.Expect(c.Exists("key")).To(BeFalse())
+
+	AssertEqual(t, ok, true)
+	AssertEqual(t, v, "value")
+	AssertEqual(t, c.Exists("key"), false)
 }
 
 func TestOverflow(t *testing.T) {
-	g := NewWithT(t)
-
 	capacity := 100
 	c := evcache.New[int, int](capacity)
 
@@ -208,12 +185,12 @@ func TestOverflow(t *testing.T) {
 		c.LoadOrStore(i, 0, 0)
 	}
 
-	g.Eventually(c.Len).Should(Equal(capacity))
+	AssertEventuallyTrue(t, func() bool {
+		return c.Len() == capacity
+	})
 }
 
 func TestExpire(t *testing.T) {
-	g := NewWithT(t)
-
 	c := evcache.New[int, int](0)
 
 	n := 10
@@ -223,12 +200,12 @@ func TestExpire(t *testing.T) {
 		_, _ = c.LoadOrStore(i, d, 0)
 	}
 
-	g.Eventually(c.Len).Should(BeZero())
+	AssertEventuallyTrue(t, func() bool {
+		return c.Len() == 0
+	})
 }
 
 func TestExpireEdgeCase(t *testing.T) {
-	g := NewWithT(t)
-
 	c := evcache.New[int, *string](0)
 
 	v1 := new(string)
@@ -236,7 +213,9 @@ func TestExpireEdgeCase(t *testing.T) {
 	c.LoadOrStore(0, 10*time.Millisecond, v1)
 
 	// Wait until v1 expires.
-	g.Eventually(c.Len).Should(BeZero())
+	AssertEventuallyTrue(t, func() bool {
+		return c.Len() == 0
+	})
 
 	// Assert that after v1 expires, v2 with a longer TTL than v1, can expire,
 	// specifically that runGC() resets earliestExpireAt to zero,
@@ -244,12 +223,12 @@ func TestExpireEdgeCase(t *testing.T) {
 	v2 := new(string)
 	c.LoadOrStore(1, time.Second, v2)
 
-	g.Eventually(c.Len, 2*time.Second).Should(BeZero())
+	AssertEventuallyTrue(t, func() bool {
+		return c.Len() == 0
+	}, 2*time.Second)
 }
 
 func TestOverflowEvictionOrdering(t *testing.T) {
-	g := NewWithT(t)
-
 	capacity := 10
 	c := evcache.New[int, *string](capacity)
 	evictedKeys := make(chan int)
@@ -263,19 +242,19 @@ func TestOverflowEvictionOrdering(t *testing.T) {
 		})
 
 		_, loaded := c.LoadOrStore(i, 0, value)
-		g.Expect(loaded).To(BeFalse())
-		g.Expect(c.Len()).To(Equal(i))
+		AssertEqual(t, loaded, false)
+		AssertEqual(t, c.Len(), i)
 	}
 
 	// Overflow the cache and catch evicted keys.
 	var keys []int
 	for i := capacity + 1; i <= 2*capacity; i++ {
 		_, loaded := c.LoadOrStore(i, 0, nil)
-		g.Expect(loaded).To(BeFalse())
+		AssertEqual(t, loaded, false)
 
 		// Run the GC until the value is garbage collected
 		// and the value finalizer runs.
-		g.Eventually(func() bool {
+		AssertEventuallyTrue(t, func() bool {
 			runtime.GC()
 			select {
 			case key := <-evictedKeys:
@@ -284,11 +263,11 @@ func TestOverflowEvictionOrdering(t *testing.T) {
 			default:
 				return false
 			}
-		}).Should(BeTrue())
+		})
 	}
 
-	g.Expect(keys).To(HaveLen(capacity))
-	g.Expect(sort.IntsAreSorted(keys)).To(BeTrue())
+	AssertEqual(t, len(keys), capacity)
+	AssertEqual(t, sort.IntsAreSorted(keys), true)
 }
 
 func BenchmarkFetchAndEvictParallel(b *testing.B) {
