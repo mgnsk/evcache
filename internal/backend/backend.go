@@ -5,7 +5,6 @@ package backend
 
 import (
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/mgnsk/ringlist"
@@ -18,7 +17,7 @@ type record[V any] struct {
 	value       V
 	deadline    int64
 	wg          sync.WaitGroup
-	initialized atomic.Bool
+	initialized bool
 }
 
 func (r *record[V]) Value() V {
@@ -117,9 +116,10 @@ func (b *Backend[K, V]) Initialize(key K, value V, ttl time.Duration) {
 	}
 
 	b.list.PushBack(elem)
-	if !elem.Value.initialized.CompareAndSwap(false, true) {
+	if elem.Value.initialized {
 		panic("Initialize: expected an uninitialized element")
 	}
+	elem.Value.initialized = true
 
 	defer elem.Value.wg.Done()
 
@@ -140,7 +140,7 @@ func (b *Backend[K, V]) Load(key K) (value Element[V], ok bool) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	if r, ok := b.xmap[key]; ok && r.Value.initialized.Load() {
+	if r, ok := b.xmap[key]; ok && r.Value.initialized {
 		return r, true
 	}
 
@@ -151,8 +151,8 @@ func (b *Backend[K, V]) Load(key K) (value Element[V], ok bool) {
 func (b *Backend[K, V]) LoadOrStore(key K, new Element[V]) (old Element[V], initialized, loaded bool) {
 	b.mu.RLock()
 	if elem, ok := b.xmap[key]; ok {
-		b.mu.RUnlock()
-		return elem, elem.Value.initialized.Load(), true
+		defer b.mu.RUnlock()
+		return elem, elem.Value.initialized, true
 	}
 	b.mu.RUnlock()
 
@@ -160,7 +160,7 @@ func (b *Backend[K, V]) LoadOrStore(key K, new Element[V]) (old Element[V], init
 	defer b.mu.Unlock()
 
 	if elem, ok := b.xmap[key]; ok {
-		return elem, elem.Value.initialized.Load(), true
+		return elem, elem.Value.initialized, true
 	}
 
 	b.xmap[key] = new
@@ -180,8 +180,9 @@ func (b *Backend[K, V]) Range(f func(key K, r Element[V]) bool) {
 	for _, key := range keys {
 		b.mu.RLock()
 		elem, ok := b.xmap[key]
+		initialized := ok && elem.Value.initialized
 		b.mu.RUnlock()
-		if ok && elem.Value.initialized.Load() && !f(key, elem) {
+		if initialized && !f(key, elem) {
 			return
 		}
 	}
@@ -192,7 +193,7 @@ func (b *Backend[K, V]) Evict(key K) (Element[V], bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if elem, ok := b.xmap[key]; ok && elem.Value.initialized.Load() {
+	if elem, ok := b.xmap[key]; ok && elem.Value.initialized {
 		b.deleteLocked(key)
 		b.list.Remove(elem)
 		return elem, true
@@ -278,7 +279,7 @@ func (b *Backend[K, V]) RunGC(now int64) {
 	}()
 
 	for key, elem := range b.xmap {
-		if elem.Value.initialized.Load() {
+		if elem.Value.initialized {
 			if len(overflowed) > 0 && overflowed[elem] {
 				delete(overflowed, elem)
 				b.deleteLocked(key)
