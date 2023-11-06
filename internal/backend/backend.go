@@ -110,18 +110,19 @@ func (b *Backend[K, V]) Initialize(key K, value V, ttl time.Duration) {
 		panic("Initialize: expected element to exist")
 	}
 
+	if elem.Value.initialized {
+		panic("Initialize: expected an uninitialized element")
+	}
+
+	defer elem.Value.wg.Done()
+
 	elem.Value.value = value
 	if ttl > 0 {
 		elem.Value.deadline = time.Now().Add(ttl).UnixNano()
 	}
 
 	b.list.PushBack(elem)
-	if elem.Value.initialized {
-		panic("Initialize: expected an uninitialized element")
-	}
 	elem.Value.initialized = true
-
-	defer elem.Value.wg.Done()
 
 	if n := b.overflow(); n > 0 {
 		b.startGCOnce()
