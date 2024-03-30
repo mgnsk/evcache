@@ -6,24 +6,30 @@ import (
 	"time"
 )
 
-// AssertSuccess that error did not occur.
-func AssertSuccess(t testing.TB, err error) {
-	if err != nil || !isNil(err) {
+// Must that error did not occur.
+func Must(t testing.TB, err error) {
+	t.Helper()
+
+	if err != nil {
 		t.Fatalf("expected success")
 	}
 }
 
-// AssertEqual asserts that values are deeply equal.
-func AssertEqual[T any](t testing.TB, a, b T) {
+// Equal asserts that values are deeply equal.
+func Equal[T any](t testing.TB, a, b T) {
+	t.Helper()
+
 	if !reflect.DeepEqual(a, b) {
 		t.Fatalf("expected '%v' to be equal to '%v'", a, b)
 	}
 }
 
-// AssertEventuallyTrue asserts that f eventually returns true.
-func AssertEventuallyTrue(t testing.TB, f func() bool, timeout ...time.Duration) {
+// EventuallyTrue asserts that f eventually returns true.
+func EventuallyTrue(t testing.TB, f func() bool, timeout ...time.Duration) {
+	t.Helper()
+
 	limit := time.Second
-	if timeout != nil {
+	if len(timeout) > 0 {
 		limit = timeout[0]
 	}
 
@@ -44,17 +50,4 @@ func AssertEventuallyTrue(t testing.TB, f func() bool, timeout ...time.Duration)
 			}
 		}
 	}
-}
-
-func isNil(a interface{}) bool {
-	if a == nil {
-		return true
-	}
-
-	switch reflect.TypeOf(a).Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
-		return reflect.ValueOf(a).IsNil()
-	}
-
-	return false
 }

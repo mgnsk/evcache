@@ -30,6 +30,29 @@ func New[K comparable, V any](capacity int) *Cache[K, V] {
 	return c
 }
 
+// Available cache eviction policies.
+const (
+	Default = "default"
+	LRU     = "lru"
+	LFU     = "lfu"
+)
+
+// WithPolicy configures the cache with specified eviction policy.
+func (c *Cache[K, V]) WithPolicy(policy string) *Cache[K, V] {
+	if policy != "" {
+		switch policy {
+		case Default:
+		case LRU:
+			c.backend.Policy = backend.LRU
+		case LFU:
+			c.backend.Policy = backend.LFU
+		default:
+			panic("evcache: invalid eviction policy '" + policy + "'")
+		}
+	}
+	return c
+}
+
 // Exists returns whether a value in the cache exists for key.
 func (c *Cache[K, V]) Exists(key K) bool {
 	_, ok := c.backend.Load(key)
@@ -39,7 +62,7 @@ func (c *Cache[K, V]) Exists(key K) bool {
 // Get returns the value stored in the cache for key.
 func (c *Cache[K, V]) Get(key K) (value V, exists bool) {
 	if elem, ok := c.backend.Load(key); ok {
-		return elem.Value.Value(), true
+		return elem.Value, true
 	}
 
 	var zero V
@@ -51,8 +74,8 @@ func (c *Cache[K, V]) Get(key K) (value V, exists bool) {
 //
 // Range is allowed to modify the cache.
 func (c *Cache[K, V]) Range(f func(key K, value V) bool) {
-	c.backend.Range(func(key K, elem backend.Element[V]) bool {
-		return f(key, elem.Value.Value())
+	c.backend.Range(func(key K, elem *backend.Element[V]) bool {
+		return f(key, elem.Value)
 	})
 }
 
@@ -64,7 +87,7 @@ func (c *Cache[K, V]) Len() int {
 // Evict a key and return its value.
 func (c *Cache[K, V]) Evict(key K) (value V, ok bool) {
 	if elem, ok := c.backend.Evict(key); ok {
-		return elem.Value.Value(), true
+		return elem.Value, true
 	}
 
 	var zero V
@@ -111,10 +134,10 @@ loadOrStore:
 	if elem, initialized, loaded := c.backend.LoadOrStore(key, newElem); loaded {
 		if initialized {
 			c.backend.Release(newElem)
-			return elem.Value.Value(), nil
+			return elem.Value, nil
 		}
 
-		elem.Value.Wait()
+		elem.Wait()
 
 		goto loadOrStore
 	}
@@ -137,7 +160,7 @@ loadOrStore:
 		return zero, err
 	}
 
-	c.backend.Initialize(key, value, ttl)
+	c.backend.Initialize(newElem, value, ttl)
 
 	return value, nil
 }

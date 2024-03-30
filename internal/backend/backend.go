@@ -4,47 +4,28 @@ Package backend implements cache backend.
 package backend
 
 import (
+	"cmp"
+	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
-
-	"github.com/mgnsk/ringlist"
 )
 
-// If cap is 0, map hits this size and then shrinks by half, it is reallocated.
-const reallocThreshold = 100000
-
-type record[V any] struct {
-	value       V
-	deadline    int64
-	wg          sync.WaitGroup
-	initialized bool
-}
-
-func (r *record[V]) Value() V {
-	return r.value
-}
-
-// Wait for the record to be either released or discarded.
-func (r *record[V]) Wait() {
-	r.wg.Wait()
-}
-
-// Element is the cache element.
-type Element[V any] *ringlist.Element[record[V]]
-
-// RecordMap is the cache's element map.
-type RecordMap[K comparable, V any] map[K]Element[V]
-
 // Backend implements cache backend.
+// The map stores uninitialized or initialized elements, the list stores initialized or removed elements.
 type Backend[K comparable, V any] struct {
+	Policy           Policy
 	timer            *time.Timer
 	done             chan struct{}
-	xmap             RecordMap[K, V]
-	list             ringlist.List[record[V]]
+	xmap             map[K]*Element[V]
+	list             []*Element[V]
 	pool             sync.Pool
+	epoch            atomic.Uint64
 	earliestExpireAt int64
 	cap              int
-	largestLen       int // the map has at least this capacity
+	lastLen          int
+	len              int
+	numDeleted       uint64
 	needRealloc      bool
 	once             sync.Once
 	mu               sync.RWMutex
@@ -58,7 +39,8 @@ func NewBackend[K comparable, V any](capacity int) *Backend[K, V] {
 	return &Backend[K, V]{
 		timer: t,
 		done:  make(chan struct{}),
-		xmap:  make(RecordMap[K, V], capacity),
+		xmap:  make(map[K]*Element[V], capacity),
+		list:  make([]*Element[V], 0, capacity),
 		cap:   capacity,
 	}
 }
@@ -74,86 +56,96 @@ func (b *Backend[K, V]) Len() int {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	return b.list.Len()
+	return b.len
 }
 
 // Reserve a new uninitialized element.
-func (b *Backend[K, V]) Reserve() Element[V] {
-	elem, ok := b.pool.Get().(Element[V])
+func (b *Backend[K, V]) Reserve() *Element[V] {
+	elem, ok := b.pool.Get().(*Element[V])
 	if !ok {
-		elem = ringlist.NewElement(record[V]{value: *new(V)})
+		elem = &Element[V]{}
 	}
 
-	elem.Value.wg.Add(1)
+	elem.wg.Add(1)
 
 	return elem
 }
 
 // Release a reserved uninitialized element.
-func (b *Backend[K, V]) Release(elem Element[V]) {
-	elem.Value.wg.Done()
+func (b *Backend[K, V]) Release(elem *Element[V]) {
+	elem.wg.Done()
 	b.pool.Put(elem)
 }
 
 // Discard a reserved uninitialized element.
-func (*Backend[K, V]) Discard(elem Element[V]) {
-	elem.Value.wg.Done()
+func (*Backend[K, V]) Discard(elem *Element[V]) {
+	elem.wg.Done()
 }
 
 // Initialize a previously stored uninitialized element.
-func (b *Backend[K, V]) Initialize(key K, value V, ttl time.Duration) {
+func (b *Backend[K, V]) Initialize(elem *Element[V], value V, ttl time.Duration) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	elem, ok := b.xmap[key]
-	if !ok {
-		panic("Initialize: expected element to exist")
-	}
-
-	if elem.Value.initialized {
+	if elem.initialized {
 		panic("Initialize: expected an uninitialized element")
 	}
 
-	defer elem.Value.wg.Done()
+	defer elem.wg.Done()
 
-	elem.Value.value = value
+	elem.Value = value
 	if ttl > 0 {
-		elem.Value.deadline = time.Now().Add(ttl).UnixNano()
+		elem.deadline = time.Now().Add(ttl).UnixNano()
 	}
 
-	b.list.PushBack(elem)
-	elem.Value.initialized = true
+	elem.initialized = true
+	b.list = append(b.list, elem)
+	b.len++
 
 	if n := b.overflow(); n > 0 {
 		b.startGCOnce()
 		b.timer.Reset(0)
-	} else if elem.Value.deadline > 0 {
+	} else if elem.deadline > 0 {
 		b.startGCOnce()
-		if b.earliestExpireAt == 0 || elem.Value.deadline < b.earliestExpireAt {
-			b.earliestExpireAt = elem.Value.deadline
+		if b.earliestExpireAt == 0 || elem.deadline < b.earliestExpireAt {
+			b.earliestExpireAt = elem.deadline
 			b.timer.Reset(ttl)
 		}
 	}
 }
 
+func (b *Backend[K, V]) incAtomic(elem *Element[V]) {
+	switch b.Policy {
+	case LFU:
+		elem.epoch.Add(1)
+	case LRU:
+		elem.epoch.Store(b.epoch.Add(1))
+	}
+}
+
 // Load an initialized element.
-func (b *Backend[K, V]) Load(key K) (value Element[V], ok bool) {
+func (b *Backend[K, V]) Load(key K) (value *Element[V], ok bool) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	if r, ok := b.xmap[key]; ok && r.Value.initialized {
-		return r, true
+	if elem, ok := b.xmap[key]; ok && elem.initialized {
+		b.incAtomic(elem)
+		return elem, true
 	}
 
 	return nil, false
 }
 
 // LoadOrStore loads or stores an element.
-func (b *Backend[K, V]) LoadOrStore(key K, new Element[V]) (old Element[V], initialized, loaded bool) {
+func (b *Backend[K, V]) LoadOrStore(key K, new *Element[V]) (old *Element[V], initialized, loaded bool) {
 	b.mu.RLock()
 	if elem, ok := b.xmap[key]; ok {
 		defer b.mu.RUnlock()
-		return elem, elem.Value.initialized, true
+		if elem.initialized {
+			b.incAtomic(elem)
+			return elem, true, true
+		}
+		return elem, false, true
 	}
 	b.mu.RUnlock()
 
@@ -161,16 +153,21 @@ func (b *Backend[K, V]) LoadOrStore(key K, new Element[V]) (old Element[V], init
 	defer b.mu.Unlock()
 
 	if elem, ok := b.xmap[key]; ok {
-		return elem, elem.Value.initialized, true
+		if elem.initialized {
+			b.incAtomic(elem)
+			return elem, true, true
+		}
+		return elem, false, true
 	}
 
+	// New elements are at epoch 0.
 	b.xmap[key] = new
 
 	return new, false, false
 }
 
 // Range iterates over initialized cache elements in no particular order.
-func (b *Backend[K, V]) Range(f func(key K, r Element[V]) bool) {
+func (b *Backend[K, V]) Range(f func(key K, r *Element[V]) bool) {
 	b.mu.RLock()
 	keys := make([]K, 0, len(b.xmap))
 	for k := range b.xmap {
@@ -181,7 +178,7 @@ func (b *Backend[K, V]) Range(f func(key K, r Element[V]) bool) {
 	for _, key := range keys {
 		b.mu.RLock()
 		elem, ok := b.xmap[key]
-		initialized := ok && elem.Value.initialized
+		initialized := ok && elem.initialized
 		b.mu.RUnlock()
 		if initialized && !f(key, elem) {
 			return
@@ -190,13 +187,12 @@ func (b *Backend[K, V]) Range(f func(key K, r Element[V]) bool) {
 }
 
 // Evict an element.
-func (b *Backend[K, V]) Evict(key K) (Element[V], bool) {
+func (b *Backend[K, V]) Evict(key K) (*Element[V], bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if elem, ok := b.xmap[key]; ok && elem.Value.initialized {
-		b.deleteLocked(key)
-		b.list.Remove(elem)
+	if elem, ok := b.xmap[key]; ok && elem.initialized {
+		b.deleteLocked(key, elem)
 		return elem, true
 	}
 
@@ -204,25 +200,45 @@ func (b *Backend[K, V]) Evict(key K) (Element[V], bool) {
 }
 
 // Delete an element from the backend map.
-// The element must be uninitialized.
+// The element may be uninitialized.
 func (b *Backend[K, V]) Delete(key K) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	b.deleteLocked(key)
+	b.deleteLocked(key, nil)
 }
 
-func (b *Backend[K, V]) deleteLocked(key K) {
-	if b.cap == 0 {
-		if n := len(b.xmap); n >= reallocThreshold || b.largestLen > 0 && n > b.largestLen {
-			b.largestLen = n
+// overflow returns the number of overflowed elements.
+// Note: b.list must not contain nil elements.
+func (b *Backend[K, V]) overflow() int {
+	if b.cap > 0 && b.len > b.cap {
+		return b.len - b.cap
+	}
+	return 0
+}
+
+func (b *Backend[K, V]) deleteLocked(key K, elem *Element[V]) {
+	if elem == nil {
+		elem = b.xmap[key]
+	}
+
+	if elem != nil {
+		delete(b.xmap, key)
+
+		if elem.initialized {
+			b.list[slices.Index(b.list, elem)] = nil
+			b.len--
+			b.numDeleted++
 		}
 	}
 
-	delete(b.xmap, key)
+	if b.lastLen == 0 {
+		b.lastLen = b.len
+	}
 
-	if b.largestLen > 0 && len(b.xmap) <= b.largestLen/2 {
-		b.largestLen = 0
+	if b.numDeleted > uint64(b.lastLen)/2 {
+		b.numDeleted = 0
+		b.lastLen = b.len
 		b.needRealloc = true
 		b.timer.Reset(0)
 	}
@@ -237,37 +253,95 @@ func (b *Backend[K, V]) startGCOnce() {
 					b.timer.Stop()
 					return
 				case now := <-b.timer.C:
-					b.RunGC(now.UnixNano())
+					b.runGC(now.UnixNano())
 				}
 			}
 		}()
 	})
 }
 
-// RunGC runs map cleanup.
-func (b *Backend[K, V]) RunGC(now int64) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+func (b *Backend[K, V]) sort() {
+	largestEpoch := uint64(0)
 
-	var overflowed map[Element[V]]bool
-	if n := b.overflow(); n > 0 {
-		overflowed = make(map[Element[V]]bool, n)
+	slices.SortFunc(b.list, func(a, b *Element[V]) int {
+		// Leave nils at the beginning.
+		if a == nil && b != nil {
+			return -1
+		} else if a == nil && b == nil {
+			return 0
+		} else if a != nil && b == nil {
+			return 1
+		}
 
-		elem := b.list.Front()
-		overflowed[elem] = true
+		epochA := a.epoch.Load()
+		epochB := b.epoch.Load()
+		if epochA > largestEpoch {
+			largestEpoch = epochA
+		}
+		if epochB > largestEpoch {
+			largestEpoch = epochB
+		}
 
-		for i := 1; i < n; i++ {
-			elem = elem.Next()
-			overflowed[elem] = true
+		result := cmp.Compare(epochA, epochB)
+
+		// Leave newly added elements at the end.
+		if epochA == 0 || epochB == 0 {
+			return result * -1
+		}
+
+		return result
+	})
+
+	// Set largest epoch + 1 for new elements.
+	for i := len(b.list) - 1; i >= 0; i-- {
+		if b.list[i] == nil || !b.list[i].epoch.CompareAndSwap(0, largestEpoch+1) {
+			break
+		}
+	}
+}
+
+func (b *Backend[K, V]) collectOverflowed() map[*Element[V]]bool {
+	var overflowed map[*Element[V]]bool
+
+	if numOverflowed := b.overflow(); numOverflowed > 0 {
+		overflowed = make(map[*Element[V]]bool, numOverflowed)
+
+		for _, elem := range b.list {
+			if elem != nil {
+				overflowed[elem] = true
+				if len(overflowed) == numOverflowed {
+					break
+				}
+			}
 		}
 	}
 
-	var newMap RecordMap[K, V]
+	return overflowed
+}
+
+func (b *Backend[K, V]) runGC(now int64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	switch b.Policy {
+	case LFU, LRU:
+		b.sort()
+	}
+
+	overflowed := b.collectOverflowed()
+
+	var (
+		newMap  map[K]*Element[V]
+		newList []*Element[V]
+	)
+
 	if b.needRealloc {
 		b.needRealloc = false
-		newMap = make(RecordMap[K, V], len(b.xmap)-len(overflowed))
+		newMap = make(map[K]*Element[V], len(b.xmap)-len(overflowed))
+		newList = make([]*Element[V], 0, len(b.xmap)-len(overflowed))
 		defer func() {
 			b.xmap = newMap
+			b.list = newList
 		}()
 	}
 
@@ -280,22 +354,22 @@ func (b *Backend[K, V]) RunGC(now int64) {
 	}()
 
 	for key, elem := range b.xmap {
-		if elem.Value.initialized {
+		if elem.initialized {
 			if len(overflowed) > 0 && overflowed[elem] {
 				delete(overflowed, elem)
-				b.deleteLocked(key)
-				b.list.Remove(elem)
+				b.deleteLocked(key, elem)
 				continue
 			}
 
-			if elem.Value.deadline > 0 && elem.Value.deadline < now {
-				b.deleteLocked(key)
-				b.list.Remove(elem)
+			deadline := elem.deadline
+
+			if deadline > 0 && deadline < now {
+				b.deleteLocked(key, elem)
 				continue
 			}
 
-			if elem.Value.deadline > 0 && (earliest == 0 || elem.Value.deadline < earliest) {
-				earliest = elem.Value.deadline
+			if deadline > 0 && (earliest == 0 || deadline < earliest) {
+				earliest = deadline
 			}
 		}
 
@@ -303,11 +377,12 @@ func (b *Backend[K, V]) RunGC(now int64) {
 			newMap[key] = elem
 		}
 	}
-}
 
-func (b *Backend[K, V]) overflow() int {
-	if b.cap > 0 && b.list.Len() > b.cap {
-		return b.list.Len() - b.cap
+	if newList != nil {
+		if first := slices.IndexFunc(b.list, func(e *Element[V]) bool {
+			return e != nil
+		}); first != -1 {
+			newList = append(newList, b.list[first:]...)
+		}
 	}
-	return 0
 }
