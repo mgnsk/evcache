@@ -5,7 +5,8 @@ import (
 )
 
 // Record is a cache record.
-type Record[V any] struct {
+type Record[K comparable, V any] struct {
+	Key         K
 	Value       V
 	deadline    int64
 	initialized bool

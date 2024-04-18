@@ -4,7 +4,6 @@ import (
 	"maps"
 	"runtime"
 	"testing"
-	"time"
 
 	"github.com/mgnsk/evcache/v3/internal/backend"
 	. "github.com/mgnsk/evcache/v3/internal/testing"
@@ -19,18 +18,18 @@ func TestReallocUninitializedRecords(t *testing.T) {
 
 		t.Log("filling the cache")
 		for i := 0; i < size; i++ {
-			elem, _ := b.LoadOrStore(i, b.Reserve())
+			elem, _ := b.LoadOrStore(b.Reserve(i))
 			b.Initialize(elem, i, 0)
 		}
 
 		t.Log("asserting number of initialized elements is correct")
 		assertCacheLen(t, b, size)
 
-		var elem *ringlist.Element[backend.Record[int]]
+		var elem *ringlist.Element[backend.Record[int, int]]
 
 		t.Log("storing a new uninitialized element")
-		elem = b.Reserve()
-		_, loaded := b.LoadOrStore(size, elem)
+		elem = b.Reserve(size)
+		_, loaded := b.LoadOrStore(elem)
 		Equal(t, loaded, false)
 
 		t.Log("asserting number of initialized has not changed")
@@ -41,9 +40,6 @@ func TestReallocUninitializedRecords(t *testing.T) {
 			_, ok := b.Evict(i)
 			Equal(t, ok, true)
 		}
-
-		t.Log("by running GC to force realloc")
-		b.RunGC(time.Now().UnixNano())
 
 		t.Log("asserting number of initialized elements is correct")
 		assertCacheLen(t, b, size/2)
@@ -60,8 +56,8 @@ func TestDeleteUninitializedElement(t *testing.T) {
 	b := backend.NewBackend[int, int](0)
 
 	t.Log("storing a new uninitialized element")
-	elem := b.Reserve()
-	_, loaded := b.LoadOrStore(0, elem)
+	elem := b.Reserve(0)
+	_, loaded := b.LoadOrStore(elem)
 	Equal(t, loaded, false)
 	assertCacheLen(t, b, 0)
 
@@ -69,7 +65,7 @@ func TestDeleteUninitializedElement(t *testing.T) {
 	Equal(t, evicted, false)
 	assertCacheLen(t, b, 0)
 
-	b.Discard(0, elem)
+	b.Discard(elem)
 	assertCacheLen(t, b, 0)
 }
 
@@ -188,7 +184,7 @@ func getMemStats() uint64 {
 func getMapRangeCount[K comparable, V any](b *backend.Backend[K, V]) int {
 	n := 0
 
-	b.Range(func(K, *ringlist.Element[backend.Record[V]]) bool {
+	b.Range(func(*ringlist.Element[backend.Record[K, V]]) bool {
 		n++
 		return true
 	})
@@ -205,8 +201,8 @@ func assertCacheLen[K comparable, V any](t *testing.T, be *backend.Backend[K, V]
 
 func fillCache(t *testing.T, b *backend.Backend[int, int], capacity int) {
 	for i := 0; i < capacity; i++ {
-		elem := b.Reserve()
-		_, loaded := b.LoadOrStore(i, elem)
+		elem := b.Reserve(i)
+		_, loaded := b.LoadOrStore(elem)
 		Equal(t, loaded, false)
 		b.Initialize(elem, 0, 0)
 	}
@@ -251,27 +247,25 @@ func overflowAndCollectKeys(t *testing.T, b *backend.Backend[int, int], capacity
 		// Collect all cache keys, then overflow the cache and observe which key disappears.
 		t.Log("collecting current cache state")
 		oldKeys := map[int]struct{}{}
-		b.Range(func(key int, _ *ringlist.Element[backend.Record[int]]) bool {
-			oldKeys[key] = struct{}{}
+		b.Range(func(elem *ringlist.Element[backend.Record[int, int]]) bool {
+			oldKeys[elem.Value.Key] = struct{}{}
 			return true
 		})
 		Equal(t, len(oldKeys), capacity)
 
 		t.Logf("store: %v", i)
-		elem := b.Reserve()
-		_, loaded := b.LoadOrStore(i, elem)
+		elem := b.Reserve(i)
+		_, loaded := b.LoadOrStore(elem)
 		Equal(t, loaded, false)
 		b.Initialize(elem, 0, 0)
 
-		t.Log("expecting GC to run")
-		EventuallyTrue(t, func() bool {
-			return b.Len() == capacity
-		})
+		t.Logf("expected overflowed element was evicted")
+		assertCacheLen(t, b, capacity)
 
 		t.Log("collecting new cache state")
 		newKeys := map[int]struct{}{}
-		b.Range(func(key int, _ *ringlist.Element[backend.Record[int]]) bool {
-			newKeys[key] = struct{}{}
+		b.Range(func(elem *ringlist.Element[backend.Record[int, int]]) bool {
+			newKeys[elem.Value.Key] = struct{}{}
 			return true
 		})
 

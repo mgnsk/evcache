@@ -22,11 +22,11 @@ func BenchmarkSliceLoop(b *testing.B) {
 			1e6,
 		} {
 			b.Run(fmt.Sprint(n), newTimePerElementBench(
-				func() ([]*backend.Record[int], int) {
-					items := createSlice[int](n, nil)
+				func() ([]*backend.Record[int, int], int) {
+					items := createSlice[int, int](n, nil)
 					return items, len(items)
 				},
-				func(items []*backend.Record[int]) {
+				func(items []*backend.Record[int, int]) {
 					for _, elem := range items {
 						if elem.Value > 0 {
 							panic("expected zero")
@@ -45,11 +45,11 @@ func BenchmarkSliceLoop(b *testing.B) {
 			1e6,
 		} {
 			b.Run(fmt.Sprint(n), newTimePerElementBench(
-				func() ([]*backend.Record[atomic.Uint64], int) {
-					items := createSlice[atomic.Uint64](n, nil)
+				func() ([]*backend.Record[int, atomic.Uint64], int) {
+					items := createSlice[int, atomic.Uint64](n, nil)
 					return items, len(items)
 				},
-				func(items []*backend.Record[atomic.Uint64]) {
+				func(items []*backend.Record[int, atomic.Uint64]) {
 					for _, elem := range items {
 						if elem.Value.Load() > 0 {
 							panic("expected zero")
@@ -69,11 +69,11 @@ func BenchmarkMapIter(b *testing.B) {
 		1e6,
 	} {
 		b.Run(fmt.Sprint(n), newTimePerElementBench(
-			func() (map[int]*backend.Record[int], int) {
+			func() (map[int]*backend.Record[int, int], int) {
 				m := createMap[int, int](n, nil)
 				return m, n
 			},
-			func(m map[int]*backend.Record[int]) {
+			func(m map[int]*backend.Record[int, int]) {
 				for _, elem := range m {
 					if elem.Value > 0 {
 						panic("expected zero")
@@ -93,14 +93,14 @@ func BenchmarkSliceSort(b *testing.B) {
 			1e6,
 		} {
 			b.Run(fmt.Sprint(n), newTimePerElementBench(
-				func() ([]*backend.Record[int], int) {
-					items := createSlice(n, func(v *int) {
+				func() ([]*backend.Record[int, int], int) {
+					items := createSlice[int, int](n, func(_ *int, v *int) {
 						*v = rand.Int()
 					})
 					return items, len(items)
 				},
-				func(items []*backend.Record[int]) {
-					slices.SortFunc(items, func(a, b *backend.Record[int]) int {
+				func(items []*backend.Record[int, int]) {
+					slices.SortFunc(items, func(a, b *backend.Record[int, int]) int {
 						return cmp.Compare(a.Value, b.Value)
 					})
 				},
@@ -116,14 +116,14 @@ func BenchmarkSliceSort(b *testing.B) {
 			1e6,
 		} {
 			b.Run(fmt.Sprint(n), newTimePerElementBench(
-				func() ([]*backend.Record[atomic.Uint64], int) {
-					items := createSlice(n, func(u *atomic.Uint64) {
+				func() ([]*backend.Record[int, atomic.Uint64], int) {
+					items := createSlice(n, func(_ *int, u *atomic.Uint64) {
 						u.Store(rand.Uint64())
 					})
 					return items, len(items)
 				},
-				func(items []*backend.Record[atomic.Uint64]) {
-					slices.SortFunc(items, func(a, b *backend.Record[atomic.Uint64]) int {
+				func(items []*backend.Record[int, atomic.Uint64]) {
+					slices.SortFunc(items, func(a, b *backend.Record[int, atomic.Uint64]) int {
 						return cmp.Compare(a.Value.Load(), b.Value.Load())
 					})
 				},
@@ -143,8 +143,8 @@ func BenchmarkBackendGC(b *testing.B) {
 			func() (*backend.Backend[int, int], int) {
 				be := backend.NewBackend[int, int](n)
 				for i := 0; i < n; i++ {
-					elem := be.Reserve()
-					_, loaded := be.LoadOrStore(i, elem)
+					elem := be.Reserve(i)
+					_, loaded := be.LoadOrStore(elem)
 					Equal(b, loaded, false)
 					be.Initialize(elem, 0, 0)
 				}
@@ -171,8 +171,8 @@ func BenchmarkBackendGCLFU(b *testing.B) {
 				be.Policy = backend.LFU
 
 				for i := 0; i < n; i++ {
-					elem := be.Reserve()
-					_, loaded := be.LoadOrStore(i, elem)
+					elem := be.Reserve(i)
+					_, loaded := be.LoadOrStore(elem)
 					Equal(b, loaded, false)
 					be.Initialize(elem, 0, 0)
 				}
@@ -199,8 +199,8 @@ func BenchmarkBackendGCLRU(b *testing.B) {
 				be.Policy = backend.LRU
 
 				for i := 0; i < n; i++ {
-					elem := be.Reserve()
-					_, loaded := be.LoadOrStore(i, elem)
+					elem := be.Reserve(i)
+					_, loaded := be.LoadOrStore(elem)
 					Equal(b, loaded, false)
 					be.Initialize(elem, 0, 0)
 				}
@@ -214,20 +214,20 @@ func BenchmarkBackendGCLRU(b *testing.B) {
 	}
 }
 
-func createSlice[V any](n int, valueFn func(*V)) []*backend.Record[V] {
-	items := make([]*backend.Record[V], n)
+func createSlice[K comparable, V any](n int, valueFn func(*K, *V)) []*backend.Record[K, V] {
+	items := make([]*backend.Record[K, V], n)
 	for i := 0; i < len(items); i++ {
-		items[i] = &backend.Record[V]{}
+		items[i] = &backend.Record[K, V]{}
 		if valueFn != nil {
-			valueFn(&items[i].Value)
+			valueFn(&items[i].Key, &items[i].Value)
 		}
 	}
 
 	return items
 }
 
-func createMap[K comparable, V any](n int, valueFn func(*K, *V)) map[K]*backend.Record[V] {
-	m := make(map[K]*backend.Record[V], n)
+func createMap[K comparable, V any](n int, valueFn func(*K, *V)) map[K]*backend.Record[K, V] {
+	m := make(map[K]*backend.Record[K, V], n)
 	for i := 0; i < n; i++ {
 		key := *new(K)
 		value := *new(V)
@@ -236,7 +236,7 @@ func createMap[K comparable, V any](n int, valueFn func(*K, *V)) map[K]*backend.
 			valueFn(&key, &value)
 		}
 
-		m[key] = &backend.Record[V]{Value: value}
+		m[key] = &backend.Record[K, V]{Value: value}
 	}
 
 	return m

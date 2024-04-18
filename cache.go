@@ -75,8 +75,8 @@ func (c *Cache[K, V]) Get(key K) (value V, exists bool) {
 //
 // Range is allowed to modify the cache.
 func (c *Cache[K, V]) Range(f func(key K, value V) bool) {
-	c.backend.Range(func(key K, elem *ringlist.Element[backend.Record[V]]) bool {
-		return f(key, elem.Value.Value)
+	c.backend.Range(func(elem *ringlist.Element[backend.Record[K, V]]) bool {
+		return f(elem.Value.Key, elem.Value.Value)
 	})
 }
 
@@ -129,16 +129,16 @@ func (c *Cache[K, V]) Fetch(key K, ttl time.Duration, f func() (V, error)) (valu
 
 // TryFetch is like Fetch but allows the TTL to be returned alongside the value from callback.
 func (c *Cache[K, V]) TryFetch(key K, f func() (V, time.Duration, error)) (value V, err error) {
-	newElem := c.backend.Reserve()
+	newElem := c.backend.Reserve(key)
 
-	if elem, loaded := c.backend.LoadOrStore(key, newElem); loaded {
+	if elem, loaded := c.backend.LoadOrStore(newElem); loaded {
 		c.backend.Release(newElem)
 		return elem.Value.Value, nil
 	}
 
 	defer func() {
 		if r := recover(); r != nil {
-			c.backend.Discard(key, newElem)
+			c.backend.Discard(newElem)
 
 			panic(r)
 		}
@@ -146,7 +146,7 @@ func (c *Cache[K, V]) TryFetch(key K, f func() (V, time.Duration, error)) (value
 
 	value, ttl, err := f()
 	if err != nil {
-		c.backend.Discard(key, newElem)
+		c.backend.Discard(newElem)
 
 		var zero V
 		return zero, err

@@ -181,9 +181,7 @@ func TestOverflow(t *testing.T) {
 		c.LoadOrStore(i, 0, 0)
 	}
 
-	EventuallyTrue(t, func() bool {
-		return c.Len() == capacity
-	})
+	Equal(t, c.Len(), capacity)
 }
 
 func TestExpire(t *testing.T) {
