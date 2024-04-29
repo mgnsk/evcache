@@ -40,10 +40,10 @@ func NewBackend[K comparable, V any](capacity int) *Backend[K, V] {
 	}
 }
 
-// Close stops the backend cleanup loop.
-func (b *Backend[K, V]) Close() error {
+// Close stops the backend cleanup loop
+// and allows the cache backend to be garbage collected.
+func (b *Backend[K, V]) Close() {
 	close(b.done)
-	return nil
 }
 
 // Len returns the number of initialized elements.
