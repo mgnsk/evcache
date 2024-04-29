@@ -2,6 +2,7 @@ package evcache_test
 
 import (
 	"fmt"
+	"runtime"
 	"testing"
 	"time"
 
@@ -224,4 +225,27 @@ func TestExpireEdgeCase(t *testing.T) {
 	EventuallyTrue(t, func() bool {
 		return c.Len() == 0
 	})
+}
+
+func TestCacheGoGC(t *testing.T) {
+	capacity := 1_000_000
+	c := evcache.New[int, byte](capacity)
+
+	for i := range capacity {
+		c.LoadOrStore(i, 0, 0)
+	}
+
+	var stats runtime.MemStats
+
+	runtime.ReadMemStats(&stats)
+	t.Logf("alloc before:\t%d bytes", stats.Alloc)
+
+	runtime.KeepAlive(c)
+
+	// Run GC twice to account for the finalizer.
+	runtime.GC()
+	runtime.GC()
+
+	runtime.ReadMemStats(&stats)
+	t.Logf("alloc after:\t%d bytes", stats.Alloc)
 }

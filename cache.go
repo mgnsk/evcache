@@ -18,14 +18,12 @@ type Cache[K comparable, V any] struct {
 
 // New creates an empty cache.
 func New[K comparable, V any](capacity int) *Cache[K, V] {
-	b := backend.NewBackend[K, V](capacity)
-
 	c := &Cache[K, V]{
-		backend: b,
+		backend: backend.NewBackend[K, V](capacity),
 	}
 
-	runtime.SetFinalizer(c, func(any) {
-		b.Close()
+	runtime.SetFinalizer(c, func(c *Cache[K, V]) {
+		c.backend.Close()
 	})
 
 	return c

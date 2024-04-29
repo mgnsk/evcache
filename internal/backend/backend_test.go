@@ -199,12 +199,12 @@ func assertCacheLen[K comparable, V any](t *testing.T, be *backend.Backend[K, V]
 	Equal(t, getMapRangeCount(be), n)
 }
 
-func fillCache(t *testing.T, b *backend.Backend[int, int], capacity int) {
+func fillCache[V any](t *testing.T, b *backend.Backend[int, V], capacity int) {
 	for i := 0; i < capacity; i++ {
 		elem := b.Reserve(i)
 		_, loaded := b.LoadOrStore(elem)
 		Equal(t, loaded, false)
-		b.Initialize(elem, 0, 0)
+		b.Initialize(elem, *new(V), 0)
 	}
 
 	assertCacheLen(t, b, capacity)
