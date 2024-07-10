@@ -2,7 +2,6 @@ package backend_test
 
 import (
 	"fmt"
-	"maps"
 	"runtime"
 	"sync"
 	"testing"
@@ -351,57 +350,6 @@ func TestExpireEdgeCase(t *testing.T) {
 
 	EventuallyTrue(t, func() bool {
 		return b.Len() == 0
-	})
-}
-
-func TestMapShrink(t *testing.T) {
-	n := 100000
-
-	t.Run("maps.Copy()", func(t *testing.T) {
-		m := map[int]int{}
-
-		for i := 0; i < n; i++ {
-			m[i] = i
-		}
-
-		t.Logf("after setting values: %dKB", getMemStats()/1024)
-		Equal(t, len(m), n)
-
-		for i := 0; i < n-1; i++ {
-			delete(m, i)
-		}
-
-		t.Logf("after deleting all but one: %dKB", getMemStats()/1024)
-		Equal(t, len(m), 1)
-
-		newM := map[int]int{}
-		maps.Copy(newM, m)
-
-		t.Logf("after copying map: %dKB", getMemStats()/1024)
-		Equal(t, len(newM), 1)
-	})
-
-	t.Run("maps.Clone()", func(t *testing.T) {
-		m := map[int]int{}
-
-		for i := 0; i < n; i++ {
-			m[i] = i
-		}
-
-		t.Logf("after setting values: %dKB", getMemStats()/1024)
-		Equal(t, len(m), n)
-
-		for i := 0; i < n-1; i++ {
-			delete(m, i)
-		}
-
-		t.Logf("after deleting all but one: %dKB", getMemStats()/1024)
-		Equal(t, len(m), 1)
-
-		m = maps.Clone(m)
-
-		t.Logf("after cloning map: %dKB", getMemStats()/1024)
-		Equal(t, len(m), 1)
 	})
 }
 

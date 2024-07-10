@@ -107,7 +107,7 @@ func (b *Backend[K, V]) Evict(key K) (V, bool) {
 	return zero, false
 }
 
-// Store an element.
+// Store an element with the default TTL.
 func (b *Backend[K, V]) Store(key K, value V) {
 	b.StoreTTL(key, value, b.defaultTTL)
 }
