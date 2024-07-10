@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/mgnsk/evcache/v3/internal/backend"
-	. "github.com/mgnsk/evcache/v3/internal/testing"
 )
 
 func BenchmarkSliceLoop(b *testing.B) {
@@ -141,18 +140,17 @@ func BenchmarkBackendGC(b *testing.B) {
 	} {
 		b.Run(fmt.Sprint(n), newTimePerElementBench(
 			func() (*backend.Backend[int, int], int) {
-				be := backend.NewBackend[int, int](n)
+				var be backend.Backend[int, int]
+				be.Init(n, "", 0, 0)
 				for i := 0; i < n; i++ {
-					elem := be.Reserve(i)
-					_, loaded := be.LoadOrStore(elem)
-					Equal(b, loaded, false)
-					be.Initialize(elem, 0, 0)
+					be.Store(i, 0)
 				}
 
-				return be, be.Len()
+				return &be, be.Len()
 			},
 			func(be *backend.Backend[int, int]) {
-				be.RunGC(0)
+				keys := be.Keys()
+				runtime.KeepAlive(keys)
 			},
 		))
 	}
@@ -167,20 +165,18 @@ func BenchmarkBackendGCLFU(b *testing.B) {
 	} {
 		b.Run(fmt.Sprint(n), newTimePerElementBench(
 			func() (*backend.Backend[int, int], int) {
-				be := backend.NewBackend[int, int](n)
-				be.Policy = backend.LFU
+				var be backend.Backend[int, int]
+				be.Init(n, backend.LFU, 0, 0)
 
 				for i := 0; i < n; i++ {
-					elem := be.Reserve(i)
-					_, loaded := be.LoadOrStore(elem)
-					Equal(b, loaded, false)
-					be.Initialize(elem, 0, 0)
+					be.Store(i, 0)
 				}
 
-				return be, be.Len()
+				return &be, be.Len()
 			},
 			func(be *backend.Backend[int, int]) {
-				be.RunGC(0)
+				keys := be.Keys()
+				runtime.KeepAlive(keys)
 			},
 		))
 	}
@@ -195,20 +191,18 @@ func BenchmarkBackendGCLRU(b *testing.B) {
 	} {
 		b.Run(fmt.Sprint(n), newTimePerElementBench(
 			func() (*backend.Backend[int, int], int) {
-				be := backend.NewBackend[int, int](n)
-				be.Policy = backend.LRU
+				var be backend.Backend[int, int]
+				be.Init(n, backend.LRU, 0, 0)
 
 				for i := 0; i < n; i++ {
-					elem := be.Reserve(i)
-					_, loaded := be.LoadOrStore(elem)
-					Equal(b, loaded, false)
-					be.Initialize(elem, 0, 0)
+					be.Store(i, 0)
 				}
 
-				return be, be.Len()
+				return &be, be.Len()
 			},
 			func(be *backend.Backend[int, int]) {
-				be.RunGC(0)
+				keys := be.Keys()
+				runtime.KeepAlive(keys)
 			},
 		))
 	}

@@ -8,18 +8,92 @@ import (
 	"time"
 
 	"github.com/mgnsk/evcache/v3/internal/backend"
-	"github.com/mgnsk/ringlist"
 )
 
-// Cache is an in-memory TTL cache with optional capacity.
-type Cache[K comparable, V any] struct {
-	backend *backend.Backend[K, V]
+// Available cache eviction policies.
+const (
+	// FIFO policy orders recods in FIFO order.
+	FIFO = backend.FIFO
+	// LFU policy orders records in LFU order.
+	LFU = backend.LFU
+	// LRU policy orders records in LRU order.
+	LRU = backend.LRU
+)
+
+// Option is a cache configuration option.
+type Option interface {
+	apply(*cacheOptions)
 }
 
-// New creates an empty cache.
-func New[K comparable, V any](capacity int) *Cache[K, V] {
+type cacheOptions struct {
+	policy   string
+	capacity int
+	ttl      time.Duration
+	debounce time.Duration
+}
+
+// WithCapacity option configures the cache with specified capacity.
+func WithCapacity(capacity int) Option {
+	return funcOption(func(opts *cacheOptions) {
+		opts.capacity = capacity
+	})
+}
+
+// WithPolicy option configures the cache with specified eviction policy.
+func WithPolicy(policy string) Option {
+	return funcOption(func(opts *cacheOptions) {
+		switch policy {
+		case FIFO, LRU, LFU:
+			opts.policy = policy
+
+		default:
+			panic("evcache: invalid eviction policy '" + policy + "'")
+		}
+	})
+}
+
+// WithTTL option configures the cache with specified default TTL.
+func WithTTL(ttl time.Duration) Option {
+	return funcOption(func(opts *cacheOptions) {
+		opts.ttl = ttl
+	})
+}
+
+// WithExpiryDebounce returns an option that configures the cache with specified expiry eviction debounce duration.
+func WithExpiryDebounce(debounce time.Duration) Option {
+	return funcOption(func(opts *cacheOptions) {
+		opts.debounce = debounce
+	})
+}
+
+type funcOption func(*cacheOptions)
+
+func (o funcOption) apply(opts *cacheOptions) {
+	o(opts)
+}
+
+// Cache is an in-memory cache.
+type Cache[K comparable, V any] struct {
+	backend *backend.Backend[K, V]
+	ttl     time.Duration
+}
+
+// New creates a new empty cache.
+func New[K comparable, V any](opt ...Option) *Cache[K, V] {
+	opts := cacheOptions{
+		debounce: time.Second,
+	}
+
+	for _, o := range opt {
+		o.apply(&opts)
+	}
+
+	be := &backend.Backend[K, V]{}
+	be.Init(opts.capacity, opts.policy, opts.ttl, opts.debounce)
+
 	c := &Cache[K, V]{
-		backend: backend.NewBackend[K, V](capacity),
+		backend: be,
+		ttl:     opts.ttl,
 	}
 
 	runtime.SetFinalizer(c, func(c *Cache[K, V]) {
@@ -29,53 +103,9 @@ func New[K comparable, V any](capacity int) *Cache[K, V] {
 	return c
 }
 
-// Available cache eviction policies.
-const (
-	Default = "default"
-	LRU     = "lru"
-	LFU     = "lfu"
-)
-
-// WithPolicy configures the cache with specified eviction policy.
-func (c *Cache[K, V]) WithPolicy(policy string) *Cache[K, V] {
-	if policy != "" {
-		switch policy {
-		case Default:
-		case LRU:
-			c.backend.Policy = backend.LRU
-		case LFU:
-			c.backend.Policy = backend.LFU
-		default:
-			panic("evcache: invalid eviction policy '" + policy + "'")
-		}
-	}
-	return c
-}
-
-// Exists returns whether a value in the cache exists for key.
-func (c *Cache[K, V]) Exists(key K) bool {
-	_, ok := c.backend.Load(key)
-	return ok
-}
-
-// Get returns the value stored in the cache for key.
-func (c *Cache[K, V]) Get(key K) (value V, exists bool) {
-	if elem, ok := c.backend.Load(key); ok {
-		return elem.Value.Value, true
-	}
-
-	var zero V
-	return zero, false
-}
-
-// Range calls f for each key and value present in the cache in no particular order or consistency.
-// If f returns false, Range stops the iteration. It skips values that are currently being Fetched.
-//
-// Range is allowed to modify the cache.
-func (c *Cache[K, V]) Range(f func(key K, value V) bool) {
-	c.backend.Range(func(elem *ringlist.Element[backend.Record[K, V]]) bool {
-		return f(elem.Value.Key, elem.Value.Value)
-	})
+// Keys returns initialized cache keys in the sort order specified by policy.
+func (c *Cache[K, V]) Keys() []K {
+	return c.backend.Keys()
 }
 
 // Len returns the number of keys in the cache.
@@ -83,74 +113,36 @@ func (c *Cache[K, V]) Len() int {
 	return c.backend.Len()
 }
 
+// Load an element from the cache.
+func (c *Cache[K, V]) Load(key K) (value V, loaded bool) {
+	return c.backend.Load(key)
+}
+
 // Evict a key and return its value.
 func (c *Cache[K, V]) Evict(key K) (value V, ok bool) {
-	if value, ok := c.backend.Evict(key); ok {
-		return value, true
-	}
-
-	var zero V
-	return zero, false
+	return c.backend.Evict(key)
 }
 
-// LoadOrStore loads or stores a value for key. If the key is being Fetched, LoadOrStore
-// blocks until Fetch returns.
-func (c *Cache[K, V]) LoadOrStore(key K, ttl time.Duration, value V) (old V, loaded bool) {
-	loaded = true
-
-	v, _ := c.Fetch(key, ttl, func() (V, error) {
-		loaded = false
-		return value, nil
-	})
-
-	return v, loaded
+// Store an element.
+func (c *Cache[K, V]) Store(key K, value V) {
+	c.backend.Store(key, value)
 }
 
-// MustFetch fetches a value or panics if f panics.
-func (c *Cache[K, V]) MustFetch(key K, ttl time.Duration, f func() V) (value V) {
-	v, _ := c.TryFetch(key, func() (V, time.Duration, error) {
-		value := f()
-		return value, ttl, nil
-	})
-	return v
+// StoreTTL stores an element with specified TTL.
+func (c *Cache[K, V]) StoreTTL(key K, value V, ttl time.Duration) {
+	c.backend.StoreTTL(key, value, ttl)
 }
 
-// Fetch loads or stores a value for key. If a value exists, f will not be called,
-// otherwise f will be called to fetch the new value. It panics if f panics.
-// Concurrent Fetches for the same key will block each other and return a single result.
-func (c *Cache[K, V]) Fetch(key K, ttl time.Duration, f func() (V, error)) (value V, err error) {
-	return c.TryFetch(key, func() (V, time.Duration, error) {
-		value, err := f()
-		return value, ttl, err
-	})
+// Fetch loads or stores a value for key with the default TTL.
+// If a value exists, f will not be called, otherwise f will be called to fetch the new value.
+// It panics if f panics. Concurrent fetches for the same key will block and return a single result.
+func (c *Cache[K, V]) Fetch(key K, f func() (V, error)) (value V, err error) {
+	return c.backend.Fetch(key, f)
 }
 
-// TryFetch is like Fetch but allows the TTL to be returned alongside the value from callback.
-func (c *Cache[K, V]) TryFetch(key K, f func() (V, time.Duration, error)) (value V, err error) {
-	newElem := c.backend.Reserve(key)
-
-	if elem, loaded := c.backend.LoadOrStore(newElem); loaded {
-		c.backend.Release(newElem)
-		return elem.Value.Value, nil
-	}
-
-	defer func() {
-		if r := recover(); r != nil {
-			c.backend.Discard(newElem)
-
-			panic(r)
-		}
-	}()
-
-	value, ttl, err := f()
-	if err != nil {
-		c.backend.Discard(newElem)
-
-		var zero V
-		return zero, err
-	}
-
-	c.backend.Initialize(newElem, value, ttl)
-
-	return value, nil
+// FetchTTL loads or stores a value for key with the specified TTL.
+// If a value exists, f will not be called, otherwise f will be called to fetch the new value.
+// It panics if f panics. Concurrent fetches for the same key will block and return a single result.
+func (c *Cache[K, V]) FetchTTL(key K, f func() (V, time.Duration, error)) (value V, err error) {
+	return c.backend.FetchTTL(key, f)
 }
