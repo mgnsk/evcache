@@ -11,7 +11,7 @@ import (
 func BenchmarkFetchAndEvictParallel(b *testing.B) {
 	b.StopTimer()
 
-	c := evcache.New[uint64, int](0)
+	c := evcache.New[uint64, int]()
 	index := uint64(0)
 	errFetch := errors.New("error fetching")
 
@@ -21,7 +21,7 @@ func BenchmarkFetchAndEvictParallel(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			if idx := atomic.AddUint64(&index, 1); idx%2 == 0 {
-				_, _ = c.Fetch(0, 0, func() (int, error) {
+				_, _ = c.Fetch(0, func() (int, error) {
 					if idx%4 == 0 {
 						return 0, errFetch
 					}
@@ -37,14 +37,16 @@ func BenchmarkFetchAndEvictParallel(b *testing.B) {
 func BenchmarkFetchExists(b *testing.B) {
 	b.StopTimer()
 
-	c := evcache.New[uint64, int](0)
-	c.LoadOrStore(0, 0, 0)
+	c := evcache.New[uint64, int]()
+	c.Fetch(0, func() (int, error) {
+		return 0, nil
+	})
 
 	b.ReportAllocs()
 	b.StartTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, _ = c.Fetch(0, 0, func() (int, error) {
+		_, _ = c.Fetch(0, func() (int, error) {
 			panic("unexpected fetch callback")
 		})
 	}
@@ -53,13 +55,13 @@ func BenchmarkFetchExists(b *testing.B) {
 func BenchmarkFetchNotExists(b *testing.B) {
 	b.StopTimer()
 
-	c := evcache.New[int, int](0)
+	c := evcache.New[int, int]()
 
 	b.ReportAllocs()
 	b.StartTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, _ = c.Fetch(i, 0, func() (int, error) {
+		_, _ = c.Fetch(i, func() (int, error) {
 			return 0, nil
 		})
 	}
