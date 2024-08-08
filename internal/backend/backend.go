@@ -24,16 +24,16 @@ type Backend[K comparable, V any] struct {
 	timer            *time.Timer                           // timer until the next element expiry.
 	xmap             map[K]*ringlist.Element[Record[K, V]] // map of uninitialized and initialized elements
 	list             ringlist.List[Record[K, V]]           // list of initialized elements
+	policy           string
 	lastGCAt         int64
 	earliestExpireAt int64
 	cap              int
-	policy           string
 	defaultTTL       time.Duration
 	debounce         time.Duration
 	lastLen          int
 	numDeleted       uint64
-	gcStarted        bool
 	mu               sync.Mutex
+	gcStarted        bool
 }
 
 // Init initializes the cache.
