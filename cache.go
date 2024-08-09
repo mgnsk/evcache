@@ -18,9 +18,7 @@ type Cache[K comparable, V any] struct {
 
 // New creates a new empty cache.
 func New[K comparable, V any](opt ...Option) *Cache[K, V] {
-	opts := cacheOptions{
-		debounce: 1 * time.Second,
-	}
+	opts := newDefaultCacheOptions()
 
 	for _, o := range opt {
 		o.apply(&opts)

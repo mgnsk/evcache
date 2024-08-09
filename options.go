@@ -28,6 +28,15 @@ type cacheOptions struct {
 	debounce time.Duration
 }
 
+func newDefaultCacheOptions() cacheOptions {
+	return cacheOptions{
+		policy:   FIFO,
+		capacity: 0,
+		ttl:      0,
+		debounce: 1 * time.Second,
+	}
+}
+
 // WithCapacity option configures the cache with specified capacity.
 //
 // The zero values configures unbounded capacity.
@@ -61,19 +70,6 @@ func WithPolicy(policy string) Option {
 func WithTTL(ttl time.Duration) Option {
 	return funcOption(func(opts *cacheOptions) {
 		opts.ttl = ttl
-	})
-}
-
-// WithExpiryDebounce returns an option that configures the cache with specified expiry eviction debounce duration.
-//
-// The zero value configures the default 1s debounce duration.
-func WithExpiryDebounce(debounce time.Duration) Option {
-	return funcOption(func(opts *cacheOptions) {
-		if debounce == 0 {
-			opts.debounce = 1 * time.Second
-		} else {
-			opts.debounce = debounce
-		}
 	})
 }
 
