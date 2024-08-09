@@ -87,7 +87,7 @@ func (b *Backend[K, V]) Load(key K) (value V, ok bool) {
 	return zero, false
 }
 
-// Keys returns keys for initialized cache elements in no particular order or consistency.
+// Keys returns keys for initialized cache elements in the sort order specified by policy.
 func (b *Backend[K, V]) Keys() []K {
 	b.mu.Lock()
 	defer b.mu.Unlock()
