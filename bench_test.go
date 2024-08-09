@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/mgnsk/evcache/v3"
+	"github.com/mgnsk/evcache/v4"
 )
 
 func BenchmarkFetchAndEvictParallel(b *testing.B) {

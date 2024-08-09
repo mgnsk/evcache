@@ -4,7 +4,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/mgnsk/evcache/v3"
+	"github.com/mgnsk/evcache/v4"
 )
 
 func TestCacheGoGC(t *testing.T) {

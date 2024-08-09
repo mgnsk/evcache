@@ -1,15 +1,3 @@
-# evcache
-
-[![Go Reference](https://pkg.go.dev/badge/github.com/mgnsk/evcache/v4.svg)](https://pkg.go.dev/github.com/mgnsk/evcache/v4)
-[![Go Report Card](https://goreportcard.com/badge/github.com/mgnsk/evcache/v4)](https://goreportcard.com/report/github.com/mgnsk/evcache/v4)
-
-Package evcache implements a concurrent key-value cache with capacity overflow eviction, item expiry and deduplication.
-
-`import "github.com/mgnsk/evcache/v4"`
-
-### Example
-
-```go
 package main
 
 import (
@@ -39,4 +27,3 @@ func main() {
 	// Use the result.
 	println(result)
 }
-```

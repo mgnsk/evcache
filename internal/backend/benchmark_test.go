@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/mgnsk/evcache/v3/internal/backend"
+	"github.com/mgnsk/evcache/v4/internal/backend"
 )
 
 func BenchmarkSliceLoop(b *testing.B) {

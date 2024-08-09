@@ -3,7 +3,7 @@ package evcache
 import (
 	"time"
 
-	"github.com/mgnsk/evcache/v3/internal/backend"
+	"github.com/mgnsk/evcache/v4/internal/backend"
 )
 
 // Available cache eviction policies.

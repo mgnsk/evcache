@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mgnsk/evcache/v3/internal/backend"
-	. "github.com/mgnsk/evcache/v3/internal/testing"
+	"github.com/mgnsk/evcache/v4/internal/backend"
+	. "github.com/mgnsk/evcache/v4/internal/testing"
 )
 
 func TestFetchCallbackBlocks(t *testing.T) {

@@ -1,13 +1,10 @@
-/*
-Package evcache implements a concurrent key-value cache with capacity overflow eviction, item expiry and deduplication.
-*/
 package evcache
 
 import (
 	"runtime"
 	"time"
 
-	"github.com/mgnsk/evcache/v3/internal/backend"
+	"github.com/mgnsk/evcache/v4/internal/backend"
 )
 
 // Cache is an in-memory cache.
