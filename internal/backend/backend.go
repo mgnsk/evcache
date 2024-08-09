@@ -13,7 +13,7 @@ import (
 
 // Available cache eviction policies.
 const (
-	FIFO = ""
+	FIFO = "fifo"
 	LFU  = "lfu"
 	LRU  = "lru"
 )
