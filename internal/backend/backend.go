@@ -64,6 +64,15 @@ func (b *Backend[K, V]) Len() int {
 	return b.list.Len()
 }
 
+// Has returns whether the element for key is initialized.
+func (b *Backend[K, V]) Has(key K) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	elem, ok := b.xmap[key]
+	return ok && elem.Value.state == stateInitialized
+}
+
 // Load an initialized element.
 func (b *Backend[K, V]) Load(key K) (value V, ok bool) {
 	b.mu.Lock()
@@ -78,18 +87,37 @@ func (b *Backend[K, V]) Load(key K) (value V, ok bool) {
 	return zero, false
 }
 
-// Keys returns initialized cache keys in no particular order or consistency.
+// Keys returns keys for initialized cache elements in no particular order or consistency.
 func (b *Backend[K, V]) Keys() []K {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	keys := make([]K, 0, len(b.xmap))
+	keys := make([]K, 0, b.list.Len())
 	b.list.Do(func(elem *ringlist.Element[Record[K, V]]) bool {
 		keys = append(keys, elem.Value.Key)
 		return true
 	})
 
 	return keys
+}
+
+// Range iterates over initialized cache elements in no particular order or consistency.
+// If f returns false, range stops the iteration.
+//
+// f may modify the cache.
+func (b *Backend[K, V]) Range(f func(key K, value V) bool) {
+	keys := b.Keys()
+
+	for _, key := range keys {
+		b.mu.Lock()
+		elem, ok := b.xmap[key]
+		initialized := ok && elem.Value.state == stateInitialized
+		b.mu.Unlock()
+
+		if initialized && !f(key, elem.Value.Value) {
+			return
+		}
+	}
 }
 
 // Evict an element.

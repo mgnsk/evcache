@@ -63,12 +63,34 @@ func TestFetchCallbackBlocks(t *testing.T) {
 		})
 	})
 
+	t.Run("non-blocking Has", func(t *testing.T) {
+		b.Fetch("key1", func() (string, error) {
+			return "value1", nil
+		})
+
+		Equal(t, b.Has("key1"), true)
+	})
+
 	t.Run("non-blocking Keys", func(t *testing.T) {
 		b.Fetch("key1", func() (string, error) {
 			return "value1", nil
 		})
 
 		keys := b.Keys()
+		Equal(t, len(keys), 1)
+		Equal(t, keys[0], "key1")
+	})
+
+	t.Run("non-blocking Range", func(t *testing.T) {
+		b.Fetch("key1", func() (string, error) {
+			return "value1", nil
+		})
+
+		var keys []string
+		b.Range(func(key string, _ string) bool {
+			keys = append(keys, key)
+			return true
+		})
 		Equal(t, len(keys), 1)
 		Equal(t, keys[0], "key1")
 	})
