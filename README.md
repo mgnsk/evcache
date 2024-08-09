@@ -5,8 +5,6 @@
 
 Package evcache implements a concurrent key-value cache with capacity overflow eviction, item expiry and deduplication.
 
-`import "github.com/mgnsk/evcache/v4"`
-
 ### Example
 
 ```go
