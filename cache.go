@@ -51,11 +51,6 @@ func (c *Cache[K, V]) Load(key K) (value V, loaded bool) {
 	return c.backend.Load(key)
 }
 
-// Keys returns keys for initialized cache elements in the sort order specified by policy.
-func (c *Cache[K, V]) Keys() []K {
-	return c.backend.Keys()
-}
-
 // Range iterates over initialized cache elements in no particular order or consistency.
 // If f returns false, range stops the iteration.
 //

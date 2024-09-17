@@ -87,34 +87,22 @@ func (b *Backend[K, V]) Load(key K) (value V, ok bool) {
 	return zero, false
 }
 
-// Keys returns keys for initialized cache elements in the sort order specified by policy.
-func (b *Backend[K, V]) Keys() []K {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	keys := make([]K, 0, b.list.Len())
-	b.list.Do(func(elem *ringlist.Element[Record[K, V]]) bool {
-		keys = append(keys, elem.Value.Key)
-		return true
-	})
-
-	return keys
-}
-
 // Range iterates over initialized cache elements in no particular order or consistency.
 // If f returns false, range stops the iteration.
 //
 // f may modify the cache.
 func (b *Backend[K, V]) Range(f func(key K, value V) bool) {
-	keys := b.Keys()
+	b.mu.Lock()
+	elems := make([]*ringlist.Element[Record[K, V]], 0, len(b.xmap))
+	for _, elem := range b.xmap {
+		if elem.Value.state == stateInitialized {
+			elems = append(elems, elem)
+		}
+	}
+	b.mu.Unlock()
 
-	for _, key := range keys {
-		b.mu.Lock()
-		elem, ok := b.xmap[key]
-		initialized := ok && elem.Value.state == stateInitialized
-		b.mu.Unlock()
-
-		if initialized && !f(key, elem.Value.Value) {
+	for _, elem := range elems {
+		if !f(elem.Value.Key, elem.Value.Value) {
 			return
 		}
 	}

@@ -71,16 +71,6 @@ func TestFetchCallbackBlocks(t *testing.T) {
 		Equal(t, b.Has("key1"), true)
 	})
 
-	t.Run("non-blocking Keys", func(t *testing.T) {
-		b.Fetch("key1", func() (string, error) {
-			return "value1", nil
-		})
-
-		keys := b.Keys()
-		Equal(t, len(keys), 1)
-		Equal(t, keys[0], "key1")
-	})
-
 	t.Run("non-blocking Range", func(t *testing.T) {
 		b.Fetch("key1", func() (string, error) {
 			return "value1", nil
@@ -433,9 +423,10 @@ func overflowAndCollectKeys(t *testing.T, b *backend.Backend[int, int], capacity
 		// Collect all cache keys, then overflow the cache and observe which key disappears.
 		t.Log("collecting current cache state")
 		oldKeys := map[int]struct{}{}
-		for _, key := range b.Keys() {
+		b.Range(func(key int, value int) bool {
 			oldKeys[key] = struct{}{}
-		}
+			return true
+		})
 		Equal(t, len(oldKeys), capacity)
 
 		t.Logf("store: %v", i)
@@ -446,9 +437,10 @@ func overflowAndCollectKeys(t *testing.T, b *backend.Backend[int, int], capacity
 
 		t.Log("collecting new cache state")
 		newKeys := map[int]struct{}{}
-		for _, key := range b.Keys() {
+		b.Range(func(key int, value int) bool {
 			newKeys[key] = struct{}{}
-		}
+			return true
+		})
 		Equal(t, len(oldKeys), capacity)
 
 		t.Log("determining the evicted key")
