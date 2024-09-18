@@ -216,12 +216,15 @@ func TestExpiryLoopDebounce(t *testing.T) {
 
 	var debounceDisabledLen int
 	{
-		// TODO: t.Cleanup(b.Close) everywhere
 		var b backend.Backend[int, int]
 		b.Init(0, "", 0, 0)
 		t.Cleanup(b.Close)
 
 		debounceDisabledLen = getHalfTimeLength(&b)
+
+		EventuallyTrue(t, func() bool {
+			return b.Len() == 0
+		})
 	}
 
 	var debounceEnabledLen int
@@ -231,6 +234,10 @@ func TestExpiryLoopDebounce(t *testing.T) {
 		t.Cleanup(b.Close)
 
 		debounceEnabledLen = getHalfTimeLength(&b)
+
+		EventuallyTrue(t, func() bool {
+			return b.Len() == 0
+		})
 	}
 
 	t.Log("assert that debounce disabled expires elements earlier than debounce enabled")
