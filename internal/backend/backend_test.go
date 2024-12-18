@@ -2,7 +2,6 @@ package backend_test
 
 import (
 	"fmt"
-	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -372,13 +371,6 @@ func TestExpireEdgeCase(t *testing.T) {
 	})
 }
 
-func getMemStats() uint64 {
-	runtime.GC()
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
-	return m.Alloc
-}
-
 func assertCacheLen[K comparable, V any](t *testing.T, be *backend.Backend[K, V], n int) {
 	t.Helper()
 
@@ -430,7 +422,7 @@ func overflowAndCollectKeys(t *testing.T, b *backend.Backend[int, int], capacity
 		// Collect all cache keys, then overflow the cache and observe which key disappears.
 		t.Log("collecting current cache state")
 		oldKeys := map[int]struct{}{}
-		b.Range(func(key int, value int) bool {
+		b.Range(func(key int, _ int) bool {
 			oldKeys[key] = struct{}{}
 			return true
 		})
@@ -444,7 +436,7 @@ func overflowAndCollectKeys(t *testing.T, b *backend.Backend[int, int], capacity
 
 		t.Log("collecting new cache state")
 		newKeys := map[int]struct{}{}
-		b.Range(func(key int, value int) bool {
+		b.Range(func(key int, _ int) bool {
 			newKeys[key] = struct{}{}
 			return true
 		})
