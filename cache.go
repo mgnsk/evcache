@@ -10,7 +10,6 @@ import (
 // Cache is an in-memory cache.
 type Cache[K comparable, V any] struct {
 	backend *backend.Backend[K, V]
-	ttl     time.Duration
 }
 
 // New creates a new empty cache.
@@ -26,7 +25,6 @@ func New[K comparable, V any](opt ...Option) *Cache[K, V] {
 
 	c := &Cache[K, V]{
 		backend: be,
-		ttl:     opts.ttl,
 	}
 
 	runtime.SetFinalizer(c, func(c *Cache[K, V]) {
