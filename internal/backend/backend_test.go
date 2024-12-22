@@ -159,7 +159,9 @@ func TestConcurrentFetch(t *testing.T) {
 		}()
 
 		<-fetchStarted
-		errCh <- fmt.Errorf("error fetching value")
+		go func() {
+			errCh <- fmt.Errorf("error fetching value")
+		}()
 
 		v, err := b.Fetch("key", func() (string, error) {
 			return "value", nil
@@ -185,7 +187,9 @@ func TestConcurrentFetch(t *testing.T) {
 		}()
 
 		<-fetchStarted
-		valueCh <- "value"
+		go func() {
+			valueCh <- "value"
+		}()
 
 		v, err := b.Fetch("key", func() (string, error) {
 			return "value1", nil
