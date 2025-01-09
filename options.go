@@ -8,7 +8,7 @@ import (
 
 // Available cache eviction policies.
 const (
-	// FIFO policy orders recods in FIFO order.
+	// FIFO policy orders records in FIFO order.
 	FIFO = backend.FIFO
 	// LFU policy orders records in LFU order.
 	LFU = backend.LFU
