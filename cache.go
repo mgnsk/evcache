@@ -34,22 +34,22 @@ func New[K comparable, V any](opt ...Option) *Cache[K, V] {
 	return c
 }
 
-// Len returns the number of initialized elements.
+// Len returns the number of initialized values.
 func (c *Cache[K, V]) Len() int {
 	return c.backend.Len()
 }
 
-// Has returns whether the element for key is initialized.
+// Has returns whether the value for key is initialized.
 func (c *Cache[K, V]) Has(key K) bool {
 	return c.backend.Has(key)
 }
 
-// Load an initialized element.
+// Load an initialized value.
 func (c *Cache[K, V]) Load(key K) (value V, loaded bool) {
 	return c.backend.Load(key)
 }
 
-// Range iterates over initialized cache elements in no particular order or consistency.
+// Range iterates over initialized cache key-value pairs in no particular order or consistency.
 // If f returns false, range stops the iteration.
 //
 // f may modify the cache.
@@ -57,17 +57,17 @@ func (c *Cache[K, V]) Range(f func(key K, value V) bool) {
 	c.backend.Range(f)
 }
 
-// Evict an element.
+// Evict a value.
 func (c *Cache[K, V]) Evict(key K) (value V, evicted bool) {
 	return c.backend.Evict(key)
 }
 
-// Store an element with the default TTL.
+// Store a value with the default TTL.
 func (c *Cache[K, V]) Store(key K, value V) {
 	c.backend.Store(key, value)
 }
 
-// StoreTTL stores an element with specified TTL.
+// StoreTTL stores a value with specified TTL.
 func (c *Cache[K, V]) StoreTTL(key K, value V, ttl time.Duration) {
 	c.backend.StoreTTL(key, value, ttl)
 }
