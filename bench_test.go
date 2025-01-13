@@ -66,3 +66,29 @@ func BenchmarkFetchNotExists(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkLoad(b *testing.B) {
+	for _, policy := range []string{
+		evcache.FIFO,
+		evcache.LRU,
+		evcache.LFU,
+	} {
+		b.Run(policy, func(b *testing.B) {
+			c := evcache.New[int, int](
+				evcache.WithPolicy(policy),
+			)
+
+			c.Store(0, 1)
+
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			for range b.N {
+				value, _ := c.Load(0)
+				if value != 1 {
+					b.Fatal("expected value to be loaded")
+				}
+			}
+		})
+	}
+}
