@@ -12,6 +12,41 @@ import (
 	"github.com/mgnsk/evcache/v4/internal/backend"
 )
 
+func BenchmarkCleanup(b *testing.B) {
+	for _, policy := range []string{
+		backend.FIFO,
+		backend.LRU,
+		backend.LFU,
+	} {
+		b.Run(policy, func(b *testing.B) {
+			for _, size := range []int{
+				1e3,
+				1e4,
+				1e5,
+				1e6,
+			} {
+				b.Run(fmt.Sprint(size), newTimePerElementBench(
+					func() (*backend.Backend[int, int], int) {
+						var be backend.Backend[int, int]
+						be.Init(0, "", 0, 0)
+						b.Cleanup(be.Close)
+
+						// Fill the cache.
+						for i := range size {
+							be.Store(i, 0)
+						}
+
+						return &be, size
+					},
+					func(be *backend.Backend[int, int]) {
+						be.DoCleanup(0)
+					},
+				))
+			}
+		})
+	}
+}
+
 func BenchmarkSliceLoop(b *testing.B) {
 	b.Run("value elements", func(b *testing.B) {
 		for _, n := range []int{
@@ -162,10 +197,11 @@ func createMap[K comparable, V any](n int, valueFn func(*K, *V)) map[K]*backend.
 func newTimePerElementBench[S any](createSubject func() (S, int), iterate func(S)) func(b *testing.B) {
 	runtime.GC()
 
-	subject, n := createSubject()
+	subject, size := createSubject()
 
 	return func(b *testing.B) {
 		b.ReportAllocs()
+		b.ResetTimer()
 
 		for i := 0; i < b.N; i++ {
 			iterate(subject)
@@ -173,7 +209,7 @@ func newTimePerElementBench[S any](createSubject func() (S, int), iterate func(S
 
 		b.StopTimer()
 
-		nsPerElement := float64(b.Elapsed().Nanoseconds()) / float64(b.N) / float64(n)
+		nsPerElement := float64(b.Elapsed().Nanoseconds()) / float64(b.N) / float64(size)
 		b.ReportMetric(nsPerElement, "ns/element")
 	}
 }

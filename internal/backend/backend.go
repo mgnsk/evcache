@@ -309,13 +309,14 @@ func (b *Backend[K, V]) onceStartCleanupLoop() {
 				return
 
 			case now := <-b.timer.C:
-				b.doCleanup(now.UnixNano())
+				b.DoCleanup(now.UnixNano())
 			}
 		}
 	}()
 }
 
-func (b *Backend[K, V]) doCleanup(nowNano int64) {
+// DoCleanup runs the cache cleanup.
+func (b *Backend[K, V]) DoCleanup(nowNano int64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
