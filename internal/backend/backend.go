@@ -261,7 +261,7 @@ func (b *Backend[K, V]) hit(elem *ringlist.Element[Record[K, V]]) {
 }
 
 func (b *Backend[K, V]) push(elem *ringlist.Element[Record[K, V]]) {
-	b.list.PushBack(elem)
+	b.list.PushBackElem(elem)
 
 	if n := b.getOverflow(); n > 0 {
 		b.delete(b.list.Front())
