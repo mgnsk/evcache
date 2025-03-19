@@ -3,6 +3,7 @@ package evcache_test
 import (
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/mgnsk/evcache/v4"
 )
@@ -12,7 +13,7 @@ func TestCacheGoGC(t *testing.T) {
 	c := evcache.New[int, byte](evcache.WithCapacity(capacity))
 
 	for i := range capacity {
-		c.Store(i, 0)
+		c.StoreTTL(i, 0, time.Hour) // Store with TTL to trigger the cleanup runner.
 	}
 
 	var stats runtime.MemStats
