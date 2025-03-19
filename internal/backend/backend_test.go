@@ -2,6 +2,7 @@ package backend_test
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -396,6 +397,37 @@ func TestExpireEdgeCase(t *testing.T) {
 	EventuallyTrue(t, func() bool {
 		return b.Len() == 0
 	})
+}
+
+func TestMapShrink(t *testing.T) {
+	var b backend.Backend[int, struct{}]
+	b.Init(0, "", 0, 0)
+
+	n := 1_000_000
+
+	for i := range n {
+		b.Store(i, struct{}{})
+	}
+
+	var stats runtime.MemStats
+	runtime.ReadMemStats(&stats)
+	t.Logf("alloc before:\t%d bytes", stats.Alloc)
+	oldSize := stats.Alloc
+
+	// Delete half elements.
+	for i := range n / 2 {
+		b.Evict(i)
+	}
+
+	runtime.GC()
+
+	runtime.ReadMemStats(&stats)
+	t.Logf("alloc after:\t%d bytes", stats.Alloc)
+	newSize := stats.Alloc
+
+	Equal(t, newSize < oldSize/2, true)
+
+	b.Close() // Keep the backend alive until here.
 }
 
 func assertCacheLen[K comparable, V any](t *testing.T, be *backend.Backend[K, V], n int) {

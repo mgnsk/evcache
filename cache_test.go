@@ -10,10 +10,10 @@ import (
 
 func TestCacheGoGC(t *testing.T) {
 	capacity := 1_000_000
-	c := evcache.New[int, byte](evcache.WithCapacity(capacity))
+	c := evcache.New[int, struct{}](evcache.WithCapacity(capacity))
 
 	for i := range capacity {
-		c.StoreTTL(i, 0, time.Hour) // Store with TTL to trigger the cleanup runner.
+		c.StoreTTL(i, struct{}{}, time.Hour) // Store with TTL to trigger the cleanup runner.
 	}
 
 	var stats runtime.MemStats
