@@ -150,8 +150,9 @@ func (b *Backend[K, V]) StoreTTL(key K, value V, ttl time.Duration) {
 	new := b.list.NewElement(Record[K, V]{})
 	deadline := b.prepareDeadline(ttl)
 	new.Value.Initialize(key, value, deadline)
-	b.push(new)
+	b.list.PushBackElem(new)
 	b.xmap[key] = new
+	b.deleteOverflow()
 }
 
 // Fetch loads or stores a value for key with the default TTL.
@@ -216,8 +217,9 @@ tryLoadStore:
 	}
 
 	deadline := b.prepareDeadline(ttl)
-	b.push(new)
+	b.list.PushBackElem(new)
 	new.Value.Initialize(key, value, deadline)
+	b.deleteOverflow()
 
 	return value, nil
 }
@@ -262,20 +264,10 @@ func (b *Backend[K, V]) hit(elem *list.Element[Record[K, V]]) {
 	}
 }
 
-func (b *Backend[K, V]) push(elem *list.Element[Record[K, V]]) {
-	b.list.PushBackElem(elem)
-
-	if n := b.getOverflow(); n > 0 {
+func (b *Backend[K, V]) deleteOverflow() {
+	if b.cap > 0 && b.list.Len() > b.cap {
 		b.delete(b.list.Front())
 	}
-}
-
-// getOverflow returns the number of overflowed elements.
-func (b *Backend[K, V]) getOverflow() int {
-	if b.cap > 0 && b.list.Len() > b.cap {
-		return b.list.Len() - b.cap
-	}
-	return 0
 }
 
 // delete an initialized element.
