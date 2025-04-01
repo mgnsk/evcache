@@ -312,6 +312,29 @@ func TestOverflowEvictionOrder(t *testing.T) {
 		Equal(t, keys, []int{9, 8, 7, 6, 5, 4, 3, 2, 1, 0})
 	})
 
+	t.Run("LFU persistently hit last element", func(t *testing.T) {
+		t.Parallel()
+
+		var b backend.Backend[int, int]
+		b.Init(10, backend.LFU, 0, 0)
+		t.Cleanup(b.Close)
+
+		fillCache(t, &b, 10)
+
+		t.Log("creating LFU test usage")
+		// Hit the last element capacity * 1.5 times.
+		// The element should still be the list tail.
+		for range 15 {
+			_, _ = b.Load(9)
+		}
+
+		// Overflow the cache and catch evicted keys.
+		keys := overflowAndCollectKeys(t, &b, capacity)
+
+		Equal(t, len(keys), capacity)
+		Equal(t, keys, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
+	})
+
 	t.Run("LRU order", func(t *testing.T) {
 		t.Parallel()
 

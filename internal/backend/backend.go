@@ -147,7 +147,7 @@ func (b *Backend[K, V]) StoreTTL(key K, value V, ttl time.Duration) {
 	// Note: unlike Fetch, Store never lets map readers
 	// see uninitialized elements.
 
-	new := list.NewElement(Record[K, V]{})
+	new := b.list.NewElement(Record[K, V]{})
 	deadline := b.prepareDeadline(ttl)
 	new.Value.Initialize(key, value, deadline)
 	b.push(new)
@@ -179,7 +179,7 @@ tryLoadStore:
 		goto tryLoadStore
 	}
 
-	new := list.NewElement(Record[K, V]{})
+	new := b.list.NewElement(Record[K, V]{})
 	new.Value.wg.Add(1)
 	b.xmap[key] = new
 	b.mu.Unlock()

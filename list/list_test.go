@@ -16,6 +16,7 @@ func TestPushFront(t *testing.T) {
 	l.PushFront(1)
 	assertEqual(t, l.Len(), 2)
 
+	expectValidRing(t, &l)
 	expectHasExactElements(t, &l, 1, 0)
 	assertEqual(t, l.Front().Value, 1)
 	assertEqual(t, l.Back().Value, 0)
@@ -30,6 +31,7 @@ func TestPushBack(t *testing.T) {
 	l.PushBack(1)
 	assertEqual(t, l.Len(), 2)
 
+	expectValidRing(t, &l)
 	expectHasExactElements(t, &l, 0, 1)
 	assertEqual(t, l.Front().Value, 0)
 	assertEqual(t, l.Back().Value, 1)
@@ -43,6 +45,7 @@ func TestMoveToFront(t *testing.T) {
 		l.PushBack("two")
 		l.MoveToFront(l.Back())
 
+		expectValidRing(t, &l)
 		assertEqual(t, l.Len(), 2)
 		expectHasExactElements(t, &l, "two", "one")
 		assertEqual(t, l.Front().Value, "two")
@@ -57,6 +60,7 @@ func TestMoveToFront(t *testing.T) {
 		l.PushBack("three")
 		l.MoveToFront(l.Front().Next())
 
+		expectValidRing(t, &l)
 		assertEqual(t, l.Len(), 3)
 		expectHasExactElements(t, &l, "two", "one", "three")
 		assertEqual(t, l.Front().Value, "two")
@@ -71,6 +75,7 @@ func TestMoveToFront(t *testing.T) {
 		l.PushBack("three")
 		l.MoveToFront(l.Front())
 
+		expectValidRing(t, &l)
 		assertEqual(t, l.Len(), 3)
 		expectHasExactElements(t, &l, "one", "two", "three")
 		assertEqual(t, l.Front().Value, "one")
@@ -86,6 +91,7 @@ func TestMoveToBack(t *testing.T) {
 		l.PushBack("two")
 		l.MoveToBack(l.Front())
 
+		expectValidRing(t, &l)
 		assertEqual(t, l.Len(), 2)
 		expectHasExactElements(t, &l, "two", "one")
 		assertEqual(t, l.Front().Value, "two")
@@ -100,6 +106,7 @@ func TestMoveToBack(t *testing.T) {
 		l.PushBack("three")
 		l.MoveToBack(l.Front().Next())
 
+		expectValidRing(t, &l)
 		assertEqual(t, l.Len(), 3)
 		expectHasExactElements(t, &l, "one", "three", "two")
 		assertEqual(t, l.Front().Value, "one")
@@ -114,6 +121,7 @@ func TestMoveToBack(t *testing.T) {
 		l.PushBack("three")
 		l.MoveToBack(l.Back())
 
+		expectValidRing(t, &l)
 		assertEqual(t, l.Len(), 3)
 		expectHasExactElements(t, &l, "one", "two", "three")
 		assertEqual(t, l.Front().Value, "one")
@@ -130,6 +138,7 @@ func TestMoveBefore(t *testing.T) {
 		three := l.PushBack("three")
 		l.MoveBefore(three, two)
 
+		expectValidRing(t, &l)
 		assertEqual(t, l.Len(), 3)
 		expectHasExactElements(t, &l, "one", "three", "two")
 		assertEqual(t, l.Front().Value, "one")
@@ -144,6 +153,7 @@ func TestMoveBefore(t *testing.T) {
 		l.PushBack("three")
 		l.MoveBefore(two, one)
 
+		expectValidRing(t, &l)
 		assertEqual(t, l.Len(), 3)
 		expectHasExactElements(t, &l, "two", "one", "three")
 		assertEqual(t, l.Front().Value, "two")
@@ -159,6 +169,7 @@ func TestMoveBefore(t *testing.T) {
 
 		l.MoveBefore(one, one)
 
+		expectValidRing(t, &l)
 		assertEqual(t, l.Len(), 3)
 		expectHasExactElements(t, &l, "one", "two", "three")
 		assertEqual(t, l.Front().Value, "one")
@@ -172,6 +183,7 @@ func TestMoveBefore(t *testing.T) {
 
 		l.MoveBefore(one, one)
 
+		expectValidRing(t, &l)
 		assertEqual(t, l.Len(), 1)
 		expectHasExactElements(t, &l, "one")
 		assertEqual(t, l.Front().Value, "one")
@@ -188,6 +200,7 @@ func TestMoveAfter(t *testing.T) {
 		l.PushBack("three")
 		l.MoveAfter(one, two)
 
+		expectValidRing(t, &l)
 		assertEqual(t, l.Len(), 3)
 		expectHasExactElements(t, &l, "two", "one", "three")
 		assertEqual(t, l.Front().Value, "two")
@@ -202,6 +215,7 @@ func TestMoveAfter(t *testing.T) {
 		three := l.PushBack("three")
 		l.MoveAfter(two, three)
 
+		expectValidRing(t, &l)
 		assertEqual(t, l.Len(), 3)
 		expectHasExactElements(t, &l, "one", "three", "two")
 		assertEqual(t, l.Front().Value, "one")
@@ -216,6 +230,7 @@ func TestMoveAfter(t *testing.T) {
 		three := l.PushBack("three")
 		l.MoveAfter(three, three)
 
+		expectValidRing(t, &l)
 		assertEqual(t, l.Len(), 3)
 		expectHasExactElements(t, &l, "one", "two", "three")
 		assertEqual(t, l.Front().Value, "one")
@@ -229,6 +244,7 @@ func TestMoveAfter(t *testing.T) {
 
 		l.MoveAfter(one, one)
 
+		expectValidRing(t, &l)
 		assertEqual(t, l.Len(), 1)
 		expectHasExactElements(t, &l, "one")
 		assertEqual(t, l.Front().Value, "one")
@@ -245,6 +261,7 @@ func TestMoveForward(t *testing.T) {
 		l.PushBack("three")
 		l.Move(l.Front(), 3)
 
+		expectValidRing(t, &l)
 		assertEqual(t, l.Len(), 3)
 		expectHasExactElements(t, &l, "two", "three", "one")
 		assertEqual(t, l.Front().Value, "two")
@@ -259,6 +276,7 @@ func TestMoveForward(t *testing.T) {
 		l.PushBack("three")
 		l.Move(l.Front(), 1)
 
+		expectValidRing(t, &l)
 		assertEqual(t, l.Len(), 3)
 		expectHasExactElements(t, &l, "two", "one", "three")
 		assertEqual(t, l.Front().Value, "two")
@@ -275,6 +293,7 @@ func TestMoveBackwards(t *testing.T) {
 		l.PushBack("three")
 		l.Move(l.Back(), -3)
 
+		expectValidRing(t, &l)
 		assertEqual(t, l.Len(), 3)
 		expectHasExactElements(t, &l, "three", "one", "two")
 		assertEqual(t, l.Front().Value, "three")
@@ -289,6 +308,7 @@ func TestMoveBackwards(t *testing.T) {
 		l.PushBack("three")
 		l.Move(l.Back(), -1)
 
+		expectValidRing(t, &l)
 		assertEqual(t, l.Len(), 3)
 		expectHasExactElements(t, &l, "one", "three", "two")
 		assertEqual(t, l.Front().Value, "one")
@@ -312,6 +332,13 @@ func TestDo(t *testing.T) {
 	})
 
 	assertEqual(t, elems, []string{"one", "two", "three"})
+}
+
+func expectValidRing[T any](t testing.TB, l *list.List[T]) {
+	t.Helper()
+
+	assertEqual(t, l.Front().Prev(), nil)
+	assertEqual(t, l.Back().Next(), nil)
 }
 
 func expectHasExactElements[T any](t testing.TB, l *list.List[T], elements ...T) {

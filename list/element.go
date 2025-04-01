@@ -3,33 +3,24 @@ package list
 // Element is a list element.
 type Element[V any] struct {
 	next, prev *Element[V]
+	list       *List[V]
 	Value      V
-}
-
-// NewElement creates a list element.
-func NewElement[V any](v V) *Element[V] {
-	e := &Element[V]{
-		Value: v,
-	}
-	e.next = e
-	e.prev = e
-	return e
 }
 
 // Next returns the next element or nil if e is the last element in its list.
 func (e *Element[V]) Next() *Element[V] {
-	if e == e.next {
-		return nil
+	if e != e.next && e.list != nil && e != e.list.tail {
+		return e.next
 	}
-	return e.next
+	return nil
 }
 
 // Prev returns the previous element or nil if e is the first element in its list.
 func (e *Element[V]) Prev() *Element[V] {
-	if e == e.prev {
-		return nil
+	if e != e.prev && e.list != nil && e.prev != e.list.tail {
+		return e.prev
 	}
-	return e.prev
+	return nil
 }
 
 // link inserts an element after this element.
