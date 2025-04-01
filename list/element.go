@@ -7,6 +7,16 @@ type Element[V any] struct {
 	Value      V
 }
 
+// NewElement creates a new list element.
+func NewElement[V any](v V) *Element[V] {
+	e := &Element[V]{
+		Value: v,
+	}
+	e.next = e
+	e.prev = e
+	return e
+}
+
 // Next returns the next element or nil if e is the last element in its list.
 func (e *Element[V]) Next() *Element[V] {
 	if e != e.next && e.list != nil && e != e.list.tail {

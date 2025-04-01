@@ -8,17 +8,6 @@ type List[V any] struct {
 	len  int
 }
 
-// NewElement creates a new element belonging to this list.
-func (l *List[V]) NewElement(v V) *Element[V] {
-	e := &Element[V]{
-		Value: v,
-		list:  l,
-	}
-	e.next = e
-	e.prev = e
-	return e
-}
-
 // Len returns the number of elements in the list.
 func (l *List[V]) Len() int {
 	return l.len
@@ -39,13 +28,14 @@ func (l *List[V]) Back() *Element[V] {
 
 // PushBack inserts a value at the back of list l and returns the new element.
 func (l *List[V]) PushBack(value V) *Element[V] {
-	e := l.NewElement(value)
+	e := NewElement(value)
 	l.PushBackElem(e)
 	return e
 }
 
 // PushBackElem inserts a new element at the back of list l.
 func (l *List[V]) PushBackElem(e *Element[V]) {
+	e.list = l
 	if l.tail != nil {
 		l.tail.link(e)
 	}
@@ -55,13 +45,14 @@ func (l *List[V]) PushBackElem(e *Element[V]) {
 
 // PushFront inserts a value at the front of list l and returns the new element.
 func (l *List[V]) PushFront(value V) *Element[V] {
-	e := l.NewElement(value)
+	e := NewElement(value)
 	l.PushFrontElem(e)
 	return e
 }
 
 // PushFrontElem inserts a new element at the front of list l.
 func (l *List[V]) PushFrontElem(e *Element[V]) {
+	e.list = l
 	if l.tail != nil {
 		l.tail.link(e)
 	} else {
