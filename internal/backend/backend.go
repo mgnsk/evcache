@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mgnsk/ringlist"
+	"github.com/mgnsk/evcache/v4/list"
 )
 
 // Available cache eviction policies.
@@ -21,9 +21,9 @@ const (
 // Backend implements cache backend.
 type Backend[K comparable, V any] struct {
 	done             chan struct{}
-	timer            *time.Timer                           // timer until the next element expiry.
-	xmap             map[K]*ringlist.Element[Record[K, V]] // map of uninitialized and initialized elements
-	list             ringlist.List[Record[K, V]]           // list of initialized elements
+	timer            *time.Timer                       // timer until the next element expiry.
+	xmap             map[K]*list.Element[Record[K, V]] // map of uninitialized and initialized elements
+	list             list.List[Record[K, V]]           // list of initialized elements
 	policy           string
 	lastGCAt         int64
 	earliestExpireAt int64
@@ -43,7 +43,7 @@ func (b *Backend[K, V]) Init(capacity int, policy string, defaultTTL time.Durati
 
 	b.timer = t
 	b.done = make(chan struct{})
-	b.xmap = make(map[K]*ringlist.Element[Record[K, V]], capacity)
+	b.xmap = make(map[K]*list.Element[Record[K, V]], capacity)
 	b.cap = capacity
 	b.policy = policy
 	b.defaultTTL = defaultTTL
@@ -93,7 +93,7 @@ func (b *Backend[K, V]) Load(key K) (value V, ok bool) {
 // f may modify the cache.
 func (b *Backend[K, V]) Range(f func(key K, value V) bool) {
 	b.mu.Lock()
-	elems := make([]*ringlist.Element[Record[K, V]], 0, len(b.xmap))
+	elems := make([]*list.Element[Record[K, V]], 0, len(b.xmap))
 	for _, elem := range b.xmap {
 		if elem.Value.state == stateInitialized {
 			elems = append(elems, elem)
@@ -147,7 +147,7 @@ func (b *Backend[K, V]) StoreTTL(key K, value V, ttl time.Duration) {
 	// Note: unlike Fetch, Store never lets map readers
 	// see uninitialized elements.
 
-	new := ringlist.NewElement(Record[K, V]{})
+	new := list.NewElement(Record[K, V]{})
 	deadline := b.prepareDeadline(ttl)
 	new.Value.Initialize(key, value, deadline)
 	b.push(new)
@@ -179,7 +179,7 @@ tryLoadStore:
 		goto tryLoadStore
 	}
 
-	new := ringlist.NewElement(Record[K, V]{})
+	new := list.NewElement(Record[K, V]{})
 	new.Value.wg.Add(1)
 	b.xmap[key] = new
 	b.mu.Unlock()
@@ -250,17 +250,19 @@ func (b *Backend[K, V]) debounceDeadline(deadline int64) int64 {
 	return deadline
 }
 
-func (b *Backend[K, V]) hit(elem *ringlist.Element[Record[K, V]]) {
+func (b *Backend[K, V]) hit(elem *list.Element[Record[K, V]]) {
 	switch b.policy {
 	case LFU:
-		b.list.MoveAfter(elem, elem.Next())
+		if next := elem.Next(); next != nil {
+			b.list.MoveAfter(elem, next)
+		}
 	case LRU:
-		b.list.MoveAfter(elem, b.list.Back())
+		b.list.MoveToBack(elem)
 	default:
 	}
 }
 
-func (b *Backend[K, V]) push(elem *ringlist.Element[Record[K, V]]) {
+func (b *Backend[K, V]) push(elem *list.Element[Record[K, V]]) {
 	b.list.PushBackElem(elem)
 
 	if n := b.getOverflow(); n > 0 {
@@ -277,7 +279,7 @@ func (b *Backend[K, V]) getOverflow() int {
 }
 
 // delete an initialized element.
-func (b *Backend[K, V]) delete(elem *ringlist.Element[Record[K, V]]) {
+func (b *Backend[K, V]) delete(elem *list.Element[Record[K, V]]) {
 	delete(b.xmap, elem.Value.Key)
 	b.list.Remove(elem)
 	b.numDeleted++
@@ -321,11 +323,11 @@ func (b *Backend[K, V]) DoCleanup(nowNano int64) {
 	defer b.mu.Unlock()
 
 	var (
-		expired  []*ringlist.Element[Record[K, V]]
+		expired  []*list.Element[Record[K, V]]
 		earliest int64
 	)
 
-	b.list.Do(func(elem *ringlist.Element[Record[K, V]]) bool {
+	b.list.Do(func(elem *list.Element[Record[K, V]]) bool {
 		deadline := elem.Value.deadline
 
 		if deadline > 0 && deadline < nowNano {
