@@ -2,7 +2,7 @@ package list
 
 // Element is a list element.
 type Element[V any] struct {
-	next, prev *Element[V]
+	next, prev *Element[V] // Never nil in a ringlist.
 	list       *List[V]
 	Value      V
 }
