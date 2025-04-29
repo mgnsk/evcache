@@ -88,7 +88,7 @@ func (l *List[V]) MoveAfter(e, mark *Element[V]) {
 		return
 	}
 
-	l.Remove(e)
+	l.remove(e)
 
 	mark.link(e)
 	l.len++
@@ -105,7 +105,7 @@ func (l *List[V]) MoveBefore(e, mark *Element[V]) {
 		return
 	}
 
-	l.Remove(e)
+	l.remove(e)
 
 	mark.prev.link(e)
 
@@ -161,6 +161,11 @@ func (l *List[V]) Move(e *Element[V], delta int) {
 
 // Remove an element from the list.
 func (l *List[V]) Remove(e *Element[V]) {
+	e.list = nil
+	l.remove(e)
+}
+
+func (l *List[V]) remove(e *Element[V]) {
 	if e == l.tail {
 		if l.len == 1 {
 			l.tail = nil
