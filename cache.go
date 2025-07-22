@@ -27,9 +27,9 @@ func New[K comparable, V any](opt ...Option) *Cache[K, V] {
 		backend: be,
 	}
 
-	runtime.SetFinalizer(c, func(c *Cache[K, V]) {
-		c.backend.Close()
-	})
+	runtime.AddCleanup(c, func(b *backend.Backend[K, V]) {
+		b.Close()
+	}, be)
 
 	return c
 }

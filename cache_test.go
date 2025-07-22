@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/mgnsk/evcache/v4"
+	. "github.com/mgnsk/evcache/v4/internal/testing"
 )
 
 func TestCacheGoGC(t *testing.T) {
@@ -17,9 +18,9 @@ func TestCacheGoGC(t *testing.T) {
 	}
 
 	var stats runtime.MemStats
-
 	runtime.ReadMemStats(&stats)
 	t.Logf("alloc before:\t%d bytes", stats.Alloc)
+	oldSize := stats.Alloc
 
 	runtime.KeepAlive(c)
 
@@ -29,4 +30,7 @@ func TestCacheGoGC(t *testing.T) {
 
 	runtime.ReadMemStats(&stats)
 	t.Logf("alloc after:\t%d bytes", stats.Alloc)
+	newSize := stats.Alloc
+
+	Equal(t, newSize < oldSize/2, true)
 }

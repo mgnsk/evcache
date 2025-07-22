@@ -209,7 +209,7 @@ func TestExpiryLoopDebounce(t *testing.T) {
 		itemTTL := debounce / time.Duration(n)
 
 		// Store elements with 10, 20, 30, ... ms TTL.
-		for i := 0; i < n; i++ {
+		for i := range n {
 			b.StoreTTL(i, 0, time.Duration(i+1)*itemTTL)
 		}
 
@@ -362,7 +362,7 @@ func TestExpire(t *testing.T) {
 	t.Cleanup(b.Close)
 
 	n := 10
-	for i := 0; i < n; i++ {
+	for i := range n {
 		// Store records in descending TTL order.
 		b.StoreTTL(i, 0, time.Duration(n-1)*time.Millisecond)
 	}
@@ -437,7 +437,7 @@ func assertCacheLen[K comparable, V any](t *testing.T, be *backend.Backend[K, V]
 }
 
 func fillCache[V any](t *testing.T, b *backend.Backend[int, V], capacity int) {
-	for i := 0; i < capacity; i++ {
+	for i := range capacity {
 		b.Store(i, *new(V))
 	}
 
@@ -447,13 +447,13 @@ func fillCache[V any](t *testing.T, b *backend.Backend[int, V], capacity int) {
 func createLFUTestUsage(t *testing.T, b *backend.Backend[int, int], capacity int) {
 	t.Helper()
 
-	for i := 0; i < capacity; i++ {
+	for i := range capacity {
 		// Increase hit counts in list reverse order.
 		hits := capacity - i - 1
 
 		t.Logf("LFU test usage: key=%d, hits=%d\n", i, hits)
 
-		for n := 0; n < hits; n++ {
+		for range hits {
 			_, loaded := b.Load(i)
 			Equal(t, loaded, true)
 		}
@@ -473,7 +473,7 @@ func createLRUTestUsage(t *testing.T, b *backend.Backend[int, int], capacity int
 func overflowAndCollectKeys(t *testing.T, b *backend.Backend[int, int], capacity int) (result []int) {
 	t.Helper()
 
-	for i := 0; i < capacity; i++ {
+	for i := range capacity {
 		i := i + capacity
 
 		assertCacheLen(t, b, capacity)
