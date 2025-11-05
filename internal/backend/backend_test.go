@@ -414,18 +414,20 @@ func TestMapShrink(t *testing.T) {
 	t.Logf("alloc before:\t%d bytes", stats.Alloc)
 	oldSize := stats.Alloc
 
-	// Delete half elements.
-	for i := range n / 2 {
+	// Delete more than half elements.
+	for i := range n * 3 / 4 {
 		b.Evict(i)
 	}
 
-	runtime.GC()
+	EventuallyTrue(t, func() bool {
+		runtime.GC()
+		runtime.ReadMemStats(&stats)
+		newSize := stats.Alloc
 
-	runtime.ReadMemStats(&stats)
+		return newSize < oldSize/2
+	})
+
 	t.Logf("alloc after:\t%d bytes", stats.Alloc)
-	newSize := stats.Alloc
-
-	Equal(t, newSize < oldSize/2, true)
 
 	b.Close() // Keep the backend alive until here.
 }

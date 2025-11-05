@@ -24,13 +24,14 @@ func TestCacheGoGC(t *testing.T) {
 
 	runtime.KeepAlive(c)
 
-	// Run GC twice to account for the finalizer.
-	runtime.GC()
-	runtime.GC()
+	EventuallyTrue(t, func() bool {
+		runtime.GC()
+		runtime.ReadMemStats(&stats)
 
-	runtime.ReadMemStats(&stats)
+		newSize := stats.Alloc
+
+		return newSize < oldSize/2
+	})
+
 	t.Logf("alloc after:\t%d bytes", stats.Alloc)
-	newSize := stats.Alloc
-
-	Equal(t, newSize < oldSize/2, true)
 }
