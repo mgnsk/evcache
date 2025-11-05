@@ -57,29 +57,29 @@ func (c *Cache[K, V]) Range(f func(key K, value V) bool) {
 	c.backend.Range(f)
 }
 
-// Evict a value.
+// Evict an initialized value.
 func (c *Cache[K, V]) Evict(key K) (value V, evicted bool) {
 	return c.backend.Evict(key)
 }
 
-// Store a value with the default TTL.
+// Store and initialize a value with the default TTL.
 func (c *Cache[K, V]) Store(key K, value V) {
 	c.backend.Store(key, value)
 }
 
-// StoreTTL stores a value with specified TTL.
+// StoreTTL stores and initializes a value with specified TTL.
 func (c *Cache[K, V]) StoreTTL(key K, value V, ttl time.Duration) {
 	c.backend.StoreTTL(key, value, ttl)
 }
 
-// Fetch loads or stores a value for key with the default TTL.
+// Fetch loads or stores (and initializes) a value for key with the default TTL.
 // If a value exists, f will not be called, otherwise f will be called to fetch the new value.
 // It panics if f panics. Concurrent fetches for the same key will block and return a single result.
 func (c *Cache[K, V]) Fetch(key K, f func() (V, error)) (value V, err error) {
 	return c.backend.Fetch(key, f)
 }
 
-// FetchTTL loads or stores a value for key with the specified TTL.
+// FetchTTL loads or stores (and initializes) a value for key with the specified TTL.
 // If a value exists, f will not be called, otherwise f will be called to fetch the new value.
 // It panics if f panics. Concurrent fetches for the same key will block and return a single result.
 func (c *Cache[K, V]) FetchTTL(key K, f func() (V, time.Duration, error)) (value V, err error) {

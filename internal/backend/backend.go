@@ -56,7 +56,7 @@ func (b *Backend[K, V]) Close() {
 	close(b.done)
 }
 
-// Len returns the number of initialized elements.
+// Len returns the number of initialized values.
 func (b *Backend[K, V]) Len() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -64,7 +64,7 @@ func (b *Backend[K, V]) Len() int {
 	return b.list.Len()
 }
 
-// Has returns whether the element for key is initialized.
+// Has returns whether the value for key is initialized.
 func (b *Backend[K, V]) Has(key K) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -73,7 +73,7 @@ func (b *Backend[K, V]) Has(key K) bool {
 	return ok && elem.Value.state == stateInitialized
 }
 
-// Load an initialized element.
+// Load an initialized value.
 func (b *Backend[K, V]) Load(key K) (value V, ok bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -87,7 +87,7 @@ func (b *Backend[K, V]) Load(key K) (value V, ok bool) {
 	return zero, false
 }
 
-// Range iterates over initialized cache elements in no particular order or consistency.
+// Range iterates over initialized cache key-value pairs in no particular order or consistency.
 // If f returns false, range stops the iteration.
 //
 // f may modify the cache.
@@ -108,7 +108,7 @@ func (b *Backend[K, V]) Range(f func(key K, value V) bool) {
 	}
 }
 
-// Evict an element.
+// Evict an initialized value.
 func (b *Backend[K, V]) Evict(key K) (V, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -123,12 +123,12 @@ func (b *Backend[K, V]) Evict(key K) (V, bool) {
 	return zero, false
 }
 
-// Store an element with the default TTL.
+// Store and initialize a value with the default TTL.
 func (b *Backend[K, V]) Store(key K, value V) {
 	b.StoreTTL(key, value, b.defaultTTL)
 }
 
-// StoreTTL stores an element with specified TTL.
+// StoreTTL stores and initializes a value with specified TTL.
 func (b *Backend[K, V]) StoreTTL(key K, value V, ttl time.Duration) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -155,7 +155,9 @@ func (b *Backend[K, V]) StoreTTL(key K, value V, ttl time.Duration) {
 	b.deleteOverflow()
 }
 
-// Fetch loads or stores a value for key with the default TTL.
+// Fetch loads or stores (and initializes) a value for key with the default TTL.
+// If a value exists, f will not be called, otherwise f will be called to fetch the new value.
+// It panics if f panics. Concurrent fetches for the same key will block and return a single result.
 func (b *Backend[K, V]) Fetch(key K, f func() (V, error)) (value V, err error) {
 	return b.FetchTTL(key, func() (V, time.Duration, error) {
 		value, err := f()
@@ -163,7 +165,9 @@ func (b *Backend[K, V]) Fetch(key K, f func() (V, error)) (value V, err error) {
 	})
 }
 
-// FetchTTL loads or stores a value for key with the specified TTL.
+// FetchTTL loads or stores (and initializes) a value for key with the specified TTL.
+// If a value exists, f will not be called, otherwise f will be called to fetch the new value.
+// It panics if f panics. Concurrent fetches for the same key will block and return a single result.
 func (b *Backend[K, V]) FetchTTL(key K, f func() (V, time.Duration, error)) (value V, err error) {
 tryLoadStore:
 	b.mu.Lock()
