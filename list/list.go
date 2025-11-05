@@ -3,6 +3,9 @@ package list
 // List is a doubly linked list.
 //
 // The zero value is a ready to use empty list.
+//
+// The list is implemented as a ringlist but the ring semantics
+// are not exposed. It behaves just like container/list.List.
 type List[V any] struct {
 	tail *Element[V]
 	len  int
