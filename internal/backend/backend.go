@@ -22,8 +22,8 @@ const (
 type Backend[K comparable, V any] struct {
 	done             chan struct{}
 	timer            *time.Timer                       // timer until the next element expiry.
-	xmap             map[K]*list.Element[Record[K, V]] // map of uninitialized and initialized elements
-	list             list.List[Record[K, V]]           // list of initialized elements
+	xmap             map[K]*list.Element[Record[K, V]] // map of uninitialized and initialized elements.
+	list             list.List[Record[K, V]]           // list of initialized elements.
 	policy           string
 	earliestExpireAt int64
 	cap              int
