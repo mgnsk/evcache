@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/mgnsk/evcache/v4/internal/backend"
 )
@@ -28,7 +29,7 @@ func BenchmarkCleanup(b *testing.B) {
 				b.Run(fmt.Sprint(size), newTimePerElementBench(
 					func() (*backend.Backend[int, int], int) {
 						var be backend.Backend[int, int]
-						be.Init(0, "", 0, 0)
+						be.Init(0, "", 0)
 						b.Cleanup(be.Close)
 
 						// Fill the cache.
@@ -39,7 +40,7 @@ func BenchmarkCleanup(b *testing.B) {
 						return &be, size
 					},
 					func(be *backend.Backend[int, int]) {
-						be.DoCleanup(0)
+						be.DoCleanup(time.Unix(0, 0))
 					},
 				))
 			}
@@ -128,7 +129,7 @@ func BenchmarkSliceSort(b *testing.B) {
 		} {
 			b.Run(fmt.Sprint(n), newTimePerElementBench(
 				func() ([]*backend.Record[int, int], int) {
-					items := createSlice[int, int](n, func(_ *int, v *int) {
+					items := createSlice(n, func(_ *int, v *int) {
 						*v = rand.Int()
 					})
 					return items, len(items)
@@ -168,7 +169,7 @@ func BenchmarkSliceSort(b *testing.B) {
 
 func createSlice[K comparable, V any](n int, valueFn func(*K, *V)) []*backend.Record[K, V] {
 	items := make([]*backend.Record[K, V], n)
-	for i := 0; i < len(items); i++ {
+	for i := range len(items) {
 		items[i] = &backend.Record[K, V]{}
 		if valueFn != nil {
 			valueFn(&items[i].Key, &items[i].Value)
@@ -180,7 +181,7 @@ func createSlice[K comparable, V any](n int, valueFn func(*K, *V)) []*backend.Re
 
 func createMap[K comparable, V any](n int, valueFn func(*K, *V)) map[K]*backend.Record[K, V] {
 	m := make(map[K]*backend.Record[K, V], n)
-	for i := 0; i < n; i++ {
+	for range n {
 		key := *new(K)
 		value := *new(V)
 

@@ -9,7 +9,7 @@ import (
 )
 
 func TestRecordSize(t *testing.T) {
-	rt := reflect.TypeOf(backend.Record[int, int]{})
+	rt := reflect.TypeFor[backend.Record[int, int]]()
 
 	Equal(t, int(rt.Size()), 48)
 }

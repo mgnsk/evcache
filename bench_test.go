@@ -35,17 +35,14 @@ func BenchmarkFetchAndEvictParallel(b *testing.B) {
 }
 
 func BenchmarkFetchExists(b *testing.B) {
-	b.StopTimer()
-
 	c := evcache.New[uint64, int]()
 	c.Fetch(0, func() (int, error) {
 		return 0, nil
 	})
 
 	b.ReportAllocs()
-	b.StartTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = c.Fetch(0, func() (int, error) {
 			panic("unexpected fetch callback")
 		})
@@ -53,14 +50,11 @@ func BenchmarkFetchExists(b *testing.B) {
 }
 
 func BenchmarkFetchNotExists(b *testing.B) {
-	b.StopTimer()
-
 	c := evcache.New[int, int]()
 
 	b.ReportAllocs()
-	b.StartTimer()
 
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		_, _ = c.Fetch(i, func() (int, error) {
 			return 0, nil
 		})
@@ -81,9 +75,8 @@ func BenchmarkLoad(b *testing.B) {
 			c.Store(0, 1)
 
 			b.ReportAllocs()
-			b.ResetTimer()
 
-			for range b.N {
+			for b.Loop() {
 				value, _ := c.Load(0)
 				if value != 1 {
 					b.Fatal("expected value to be loaded")

@@ -13,7 +13,7 @@ import (
 
 func TestFetchCallbackBlocks(t *testing.T) {
 	var b backend.Backend[string, string]
-	b.Init(0, "", 0, 0)
+	b.Init(0, "", 0)
 	t.Cleanup(b.Close)
 
 	wg := sync.WaitGroup{}
@@ -106,7 +106,7 @@ func TestFetchCallbackBlocks(t *testing.T) {
 
 func TestFetchCallbackPanic(t *testing.T) {
 	var b backend.Backend[string, string]
-	b.Init(0, "", 0, 0)
+	b.Init(0, "", 0)
 	t.Cleanup(b.Close)
 
 	func() {
@@ -146,7 +146,7 @@ func TestFetchCallbackPanic(t *testing.T) {
 func TestConcurrentFetch(t *testing.T) {
 	t.Run("returns error", func(t *testing.T) {
 		var b backend.Backend[string, string]
-		b.Init(0, "", 0, 0)
+		b.Init(0, "", 0)
 		t.Cleanup(b.Close)
 
 		errCh := make(chan error)
@@ -174,7 +174,7 @@ func TestConcurrentFetch(t *testing.T) {
 
 	t.Run("returns value", func(t *testing.T) {
 		var b backend.Backend[string, string]
-		b.Init(0, "", 0, 0)
+		b.Init(0, "", 0)
 		t.Cleanup(b.Close)
 
 		valueCh := make(chan string)
@@ -201,56 +201,9 @@ func TestConcurrentFetch(t *testing.T) {
 	})
 }
 
-func TestExpiryLoopDebounce(t *testing.T) {
-	debounce := 100 * time.Millisecond
-	n := 10
-
-	getHalfTimeLength := func(b *backend.Backend[int, int]) int {
-		itemTTL := debounce / time.Duration(n)
-
-		// Store elements with 10, 20, 30, ... ms TTL.
-		for i := range n {
-			b.StoreTTL(i, 0, time.Duration(i+1)*itemTTL)
-		}
-
-		time.Sleep(debounce / 2)
-
-		return b.Len()
-	}
-
-	var debounceDisabledLen int
-	{
-		var b backend.Backend[int, int]
-		b.Init(0, "", 0, 0)
-		t.Cleanup(b.Close)
-
-		debounceDisabledLen = getHalfTimeLength(&b)
-
-		EventuallyTrue(t, func() bool {
-			return b.Len() == 0
-		})
-	}
-
-	var debounceEnabledLen int
-	{
-		var b backend.Backend[int, int]
-		b.Init(0, "", 0, 100*time.Millisecond)
-		t.Cleanup(b.Close)
-
-		debounceEnabledLen = getHalfTimeLength(&b)
-
-		EventuallyTrue(t, func() bool {
-			return b.Len() == 0
-		})
-	}
-
-	t.Log("assert that debounce disabled expires elements earlier than debounce enabled")
-	Equal(t, debounceDisabledLen < debounceEnabledLen, true)
-}
-
 func TestEvict(t *testing.T) {
 	var b backend.Backend[string, string]
-	b.Init(0, "", 0, 0)
+	b.Init(0, "", 0)
 	t.Cleanup(b.Close)
 
 	b.Store("key", "value")
@@ -266,7 +219,7 @@ func TestOverflow(t *testing.T) {
 	capacity := 100
 
 	var b backend.Backend[int, int]
-	b.Init(capacity, "", 0, 0)
+	b.Init(capacity, "", 0)
 	t.Cleanup(b.Close)
 
 	for i := 0; i < 2*capacity; i++ {
@@ -282,7 +235,7 @@ func TestOverflowEvictionOrder(t *testing.T) {
 		t.Parallel()
 
 		var b backend.Backend[int, int]
-		b.Init(capacity, "", 0, 0)
+		b.Init(capacity, "", 0)
 		t.Cleanup(b.Close)
 
 		fillCache(t, &b, capacity)
@@ -298,7 +251,7 @@ func TestOverflowEvictionOrder(t *testing.T) {
 		t.Parallel()
 
 		var b backend.Backend[int, int]
-		b.Init(capacity, backend.LFU, 0, 0)
+		b.Init(capacity, backend.LFU, 0)
 		t.Cleanup(b.Close)
 
 		fillCache(t, &b, capacity)
@@ -317,7 +270,7 @@ func TestOverflowEvictionOrder(t *testing.T) {
 		t.Parallel()
 
 		var b backend.Backend[int, int]
-		b.Init(10, backend.LFU, 0, 0)
+		b.Init(10, backend.LFU, 0)
 		t.Cleanup(b.Close)
 
 		fillCache(t, &b, 10)
@@ -340,7 +293,7 @@ func TestOverflowEvictionOrder(t *testing.T) {
 		t.Parallel()
 
 		var b backend.Backend[int, int]
-		b.Init(capacity, backend.LRU, 0, 0)
+		b.Init(capacity, backend.LRU, 0)
 		t.Cleanup(b.Close)
 
 		fillCache(t, &b, capacity)
@@ -358,7 +311,7 @@ func TestOverflowEvictionOrder(t *testing.T) {
 
 func TestExpire(t *testing.T) {
 	var b backend.Backend[int, int]
-	b.Init(0, "", 0, 0)
+	b.Init(0, "", 0)
 	t.Cleanup(b.Close)
 
 	n := 10
@@ -374,7 +327,7 @@ func TestExpire(t *testing.T) {
 
 func TestExpireEdgeCase(t *testing.T) {
 	var b backend.Backend[int, *string]
-	b.Init(0, "", 0, 0)
+	b.Init(0, "", 0)
 	t.Cleanup(b.Close)
 
 	v1 := new(string)
@@ -385,7 +338,7 @@ func TestExpireEdgeCase(t *testing.T) {
 	// Wait until v1 expires.
 	EventuallyTrue(t, func() bool {
 		return b.Len() == 0
-	})
+	}, 2*time.Second)
 
 	// Assert that after v1 expires, v2 with a longer TTL than v1, can expire,
 	// specifically that backend's GC loop resets earliestExpireAt to zero,
@@ -396,12 +349,12 @@ func TestExpireEdgeCase(t *testing.T) {
 
 	EventuallyTrue(t, func() bool {
 		return b.Len() == 0
-	})
+	}, 2*time.Second)
 }
 
 func TestMapShrink(t *testing.T) {
 	var b backend.Backend[int, struct{}]
-	b.Init(0, "", 0, 0)
+	b.Init(0, "", 0)
 
 	n := 1_000_000
 
