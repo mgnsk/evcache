@@ -25,11 +25,9 @@ type Backend[K comparable, V any] struct {
 	xmap             map[K]*list.Element[Record[K, V]] // map of uninitialized and initialized elements
 	list             list.List[Record[K, V]]           // list of initialized elements
 	policy           string
-	lastGCAt         int64
 	earliestExpireAt int64
 	cap              int
 	defaultTTL       time.Duration
-	debounce         time.Duration
 	lastLen          int
 	numDeleted       uint64
 	mu               sync.Mutex
@@ -37,7 +35,7 @@ type Backend[K comparable, V any] struct {
 }
 
 // Init initializes the cache.
-func (b *Backend[K, V]) Init(capacity int, policy string, defaultTTL time.Duration, debounce time.Duration) {
+func (b *Backend[K, V]) Init(capacity int, policy string, defaultTTL time.Duration) {
 	t := time.NewTimer(0)
 	<-t.C
 
@@ -47,7 +45,6 @@ func (b *Backend[K, V]) Init(capacity int, policy string, defaultTTL time.Durati
 	b.cap = capacity
 	b.policy = policy
 	b.defaultTTL = defaultTTL
-	b.debounce = debounce
 }
 
 // Close stops the backend cleanup loop
@@ -235,22 +232,13 @@ func (b *Backend[K, V]) prepareDeadline(ttl time.Duration) int64 {
 		b.onceStartCleanupLoop()
 
 		now := time.Now()
-		deadline = now.Add(ttl).UnixNano()
-		deadline = b.debounceDeadline(deadline)
+		deadline = now.Add(ttl).Unix()
 
 		if b.earliestExpireAt == 0 || deadline < b.earliestExpireAt {
 			b.earliestExpireAt = deadline
-			after := time.Duration(deadline - now.UnixNano())
+			after := time.Duration(deadline - now.Unix())
 			b.timer.Reset(after)
 		}
-	}
-
-	return deadline
-}
-
-func (b *Backend[K, V]) debounceDeadline(deadline int64) int64 {
-	if until := deadline - b.lastGCAt; until < b.debounce.Nanoseconds() {
-		deadline += b.debounce.Nanoseconds() - until
 	}
 
 	return deadline
@@ -307,18 +295,19 @@ func (b *Backend[K, V]) onceStartCleanupLoop() {
 				return
 
 			case now := <-b.timer.C:
-				b.DoCleanup(now.UnixNano())
+				b.DoCleanup(now)
 			}
 		}
 	}()
 }
 
 // DoCleanup runs the cache cleanup.
-func (b *Backend[K, V]) DoCleanup(nowNano int64) {
+func (b *Backend[K, V]) DoCleanup(now time.Time) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	var (
+		nowUnix  = now.Unix()
 		expired  []*list.Element[Record[K, V]]
 		earliest int64
 	)
@@ -326,7 +315,7 @@ func (b *Backend[K, V]) DoCleanup(nowNano int64) {
 	b.list.Do(func(elem *list.Element[Record[K, V]]) bool {
 		deadline := elem.Value.deadline
 
-		if deadline > 0 && deadline < nowNano {
+		if deadline > 0 && deadline < nowUnix {
 			expired = append(expired, elem)
 		} else if deadline > 0 && (earliest == 0 || deadline < earliest) {
 			earliest = deadline
@@ -339,15 +328,12 @@ func (b *Backend[K, V]) DoCleanup(nowNano int64) {
 		b.delete(elem)
 	}
 
-	b.lastGCAt = nowNano
-
 	switch earliest {
 	case 0:
 		b.earliestExpireAt = 0
 
 	default:
-		earliest = b.debounceDeadline(earliest)
 		b.earliestExpireAt = earliest
-		b.timer.Reset(time.Duration(earliest - nowNano))
+		b.timer.Reset(time.Duration(earliest - nowUnix))
 	}
 }

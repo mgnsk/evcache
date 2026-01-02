@@ -25,7 +25,6 @@ type cacheOptions struct {
 	policy   string
 	capacity int
 	ttl      time.Duration
-	debounce time.Duration
 }
 
 func newDefaultCacheOptions() cacheOptions {
@@ -33,7 +32,6 @@ func newDefaultCacheOptions() cacheOptions {
 		policy:   FIFO,
 		capacity: 0,
 		ttl:      0,
-		debounce: 1 * time.Second,
 	}
 }
 

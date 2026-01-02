@@ -21,7 +21,7 @@ func New[K comparable, V any](opt ...Option) *Cache[K, V] {
 	}
 
 	be := &backend.Backend[K, V]{}
-	be.Init(opts.capacity, opts.policy, opts.ttl, opts.debounce)
+	be.Init(opts.capacity, opts.policy, opts.ttl)
 
 	c := &Cache[K, V]{
 		backend: be,

@@ -14,7 +14,7 @@ const (
 type Record[K comparable, V any] struct {
 	Key      K
 	Value    V
-	deadline int64
+	deadline int64 // expiry deadline unix timestamp (seconds).
 	state    int
 	wg       sync.WaitGroup
 }
