@@ -3,6 +3,7 @@ package backend_test
 import (
 	"fmt"
 	"runtime"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -202,50 +203,63 @@ func TestConcurrentFetch(t *testing.T) {
 }
 
 func TestExpiryLoopDebounce(t *testing.T) {
-	debounce := 100 * time.Millisecond
+	debounce := time.Second
 	n := 10
+	itemTTL := debounce / time.Duration(n)
 
-	getHalfTimeLength := func(b *backend.Backend[int, int]) int {
-		itemTTL := debounce / time.Duration(n)
-
-		// Store elements with 10, 20, 30, ... ms TTL.
-		for i := range n {
-			b.StoreTTL(i, 0, time.Duration(i+1)*itemTTL)
+	collectLengths := func(b *backend.Backend[int, int]) []int {
+		var values []int
+		for {
+			l := b.Len()
+			if l == 0 {
+				break
+			}
+			values = append(values, l)
+			runtime.Gosched()
 		}
 
-		time.Sleep(debounce / 2)
+		slices.Sort(values)
+		values = slices.Compact(values)
 
-		return b.Len()
+		return values
 	}
 
-	var debounceDisabledLen int
+	// When disabled, cache expiry decrements in smaller steps - each item is deleted when expired.
+	var debounceDisabledBuckets int
 	{
 		var b backend.Backend[int, int]
 		b.Init(0, "", 0, 0)
 		t.Cleanup(b.Close)
 
-		debounceDisabledLen = getHalfTimeLength(&b)
+		// Store n elements with nth of debounce TTL.
+		for i := range n {
+			b.StoreTTL(i, 0, time.Duration(i+1)*itemTTL)
+		}
 
-		EventuallyTrue(t, func() bool {
-			return b.Len() == 0
-		})
+		values := collectLengths(&b)
+
+		debounceDisabledBuckets = len(values)
 	}
 
-	var debounceEnabledLen int
+	// When enabled, cache expiry decrements in bigger steps - items are deleted in batches.
+	var debounceEnabledBuckets int
 	{
 		var b backend.Backend[int, int]
-		b.Init(0, "", 0, 100*time.Millisecond)
+		b.Init(0, "", 0, debounce)
 		t.Cleanup(b.Close)
 
-		debounceEnabledLen = getHalfTimeLength(&b)
+		// Store n elements with nth of debounce TTL.
+		for i := range n {
+			b.StoreTTL(i, 0, time.Duration(i+1)*itemTTL)
+		}
 
-		EventuallyTrue(t, func() bool {
-			return b.Len() == 0
-		})
+		values := collectLengths(&b)
+
+		debounceEnabledBuckets = len(values)
 	}
 
 	t.Log("assert that debounce disabled expires elements earlier than debounce enabled")
-	Equal(t, debounceDisabledLen < debounceEnabledLen, true)
+	Equal(t, debounceDisabledBuckets > debounceEnabledBuckets, true)
 }
 
 func TestEvict(t *testing.T) {
