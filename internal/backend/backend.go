@@ -234,7 +234,7 @@ func (b *Backend[K, V]) prepareDeadline(ttl time.Duration) int64 {
 		b.onceStartCleanupLoop()
 
 		now := time.Now()
-		deadline = now.Add(ttl).Round(b.debounce).UnixNano()
+		deadline = now.Add(ttl).Truncate(b.debounce).Add(b.debounce).UnixNano()
 
 		if b.earliestExpireAt == 0 || deadline < b.earliestExpireAt {
 			b.resetTimer(now.UnixNano(), deadline)
