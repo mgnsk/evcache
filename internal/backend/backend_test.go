@@ -12,10 +12,11 @@ import (
 	. "github.com/mgnsk/evcache/v4/internal/testing"
 )
 
-func TestFetchCallbackBlocks(t *testing.T) {
-	var b backend.Backend[string, string]
-	b.Init(0, "", 0, 0)
-	t.Cleanup(b.Close)
+// startBlockedFetch starts a Fetch call for "key" that blocks until the
+// returned unblock func is called, returning only after the fetch callback
+// has started running.
+func startBlockedFetch(t *testing.T, b *backend.Backend[string, string]) (unblock func()) {
+	t.Helper()
 
 	wg := sync.WaitGroup{}
 	done := make(chan struct{})
@@ -23,11 +24,6 @@ func TestFetchCallbackBlocks(t *testing.T) {
 		close(done)
 	})
 	fetchStarted := make(chan struct{})
-
-	t.Cleanup(func() {
-		onceDone()
-		wg.Wait()
-	})
 
 	wg.Add(1)
 	go func() {
@@ -45,64 +41,102 @@ func TestFetchCallbackBlocks(t *testing.T) {
 
 	<-fetchStarted
 
-	t.Run("assert cache empty", func(t *testing.T) {
-		Equal(t, b.Len(), 0)
-	})
-
-	t.Run("non-blocking Evict", func(t *testing.T) {
-		_, ok := b.Evict("key")
-		Equal(t, ok, false)
-	})
-
-	t.Run("autoexpiry for other keys works", func(t *testing.T) {
-		b.FetchTTL("key1", func() (string, time.Duration, error) {
-			return "value1", time.Millisecond, nil
-		})
-
-		EventuallyTrue(t, func() bool {
-			return b.Len() == 0
-		})
-	})
-
-	t.Run("non-blocking Has", func(t *testing.T) {
-		b.Fetch("key1", func() (string, error) {
-			return "value1", nil
-		})
-
-		Equal(t, b.Has("key1"), true)
-	})
-
-	t.Run("non-blocking Range", func(t *testing.T) {
-		b.Fetch("key1", func() (string, error) {
-			return "value1", nil
-		})
-
-		var keys []string
-		b.Range(func(key string, _ string) bool {
-			keys = append(keys, key)
-			return true
-		})
-		Equal(t, len(keys), 1)
-		Equal(t, keys[0], "key1")
-	})
-
-	t.Run("Store discards the key", func(t *testing.T) {
-		b.Store("key", "value1")
-
-		value, loaded := b.Load("key")
-		Equal(t, loaded, true)
-		Equal(t, value, "value1")
-
-		t.Log("assert that overwritten value exists after Fetch returns")
-
-		// TODO: test setup scope
+	return func() {
 		onceDone()
 		wg.Wait()
+	}
+}
 
-		value, loaded = b.Load("key")
-		Equal(t, loaded, true)
-		Equal(t, value, "value1")
+func TestFetchBlocksCacheEmpty(t *testing.T) {
+	var b backend.Backend[string, string]
+	b.Init(0, "", 0, 0)
+	t.Cleanup(b.Close)
+
+	t.Cleanup(startBlockedFetch(t, &b))
+
+	Equal(t, b.Len(), 0)
+}
+
+func TestFetchBlocksNonBlockingEvict(t *testing.T) {
+	var b backend.Backend[string, string]
+	b.Init(0, "", 0, 0)
+	t.Cleanup(b.Close)
+
+	t.Cleanup(startBlockedFetch(t, &b))
+
+	_, ok := b.Evict("key")
+	Equal(t, ok, false)
+}
+
+func TestFetchBlocksAutoexpiryOtherKeys(t *testing.T) {
+	var b backend.Backend[string, string]
+	b.Init(0, "", 0, 0)
+	t.Cleanup(b.Close)
+
+	t.Cleanup(startBlockedFetch(t, &b))
+
+	b.FetchTTL("key1", func() (string, time.Duration, error) {
+		return "value1", time.Millisecond, nil
 	})
+
+	EventuallyTrue(t, func() bool {
+		return b.Len() == 0
+	})
+}
+
+func TestFetchBlocksNonBlockingHas(t *testing.T) {
+	var b backend.Backend[string, string]
+	b.Init(0, "", 0, 0)
+	t.Cleanup(b.Close)
+
+	t.Cleanup(startBlockedFetch(t, &b))
+
+	b.Fetch("key1", func() (string, error) {
+		return "value1", nil
+	})
+
+	Equal(t, b.Has("key1"), true)
+}
+
+func TestFetchBlocksNonBlockingRange(t *testing.T) {
+	var b backend.Backend[string, string]
+	b.Init(0, "", 0, 0)
+	t.Cleanup(b.Close)
+
+	t.Cleanup(startBlockedFetch(t, &b))
+
+	b.Fetch("key1", func() (string, error) {
+		return "value1", nil
+	})
+
+	var keys []string
+	b.Range(func(key string, _ string) bool {
+		keys = append(keys, key)
+		return true
+	})
+	Equal(t, len(keys), 1)
+	Equal(t, keys[0], "key1")
+}
+
+func TestStoreDiscardsInFlightFetch(t *testing.T) {
+	var b backend.Backend[string, string]
+	b.Init(0, "", 0, 0)
+	t.Cleanup(b.Close)
+
+	unblock := startBlockedFetch(t, &b)
+
+	b.Store("key", "value1")
+
+	value, loaded := b.Load("key")
+	Equal(t, loaded, true)
+	Equal(t, value, "value1")
+
+	t.Log("assert that overwritten value exists after the in-flight Fetch returns")
+	unblock()
+
+	value, loaded = b.Load("key")
+	Equal(t, loaded, true)
+	Equal(t, value, "value1")
 }
 
 func TestFetchCallbackPanic(t *testing.T) {
@@ -428,8 +462,18 @@ func TestMapShrink(t *testing.T) {
 	t.Logf("alloc before:\t%d bytes", stats.Alloc)
 	oldSize := stats.Alloc
 
-	// Delete more than half elements.
-	for i := range n * 3 / 4 {
+	// Delete all but 10% of elements.
+	//
+	// Note: the map-shrink heuristic in delete() is an amortized O(1)
+	// compaction that guarantees the live map stays within roughly 2x
+	// of the current live count, not within a fixed fraction of the
+	// original size. Deleting only e.g. 75% here would let the final
+	// map settle right at the 2x-of-live-count boundary (worst case
+	// 2 * 25% = 50% of the original size), making the assertion below
+	// flaky depending on incidental map/bucket overhead. Deleting 90%
+	// leaves enough deletions for multiple compaction passes to fire,
+	// so the final map converges much closer to the live count.
+	for i := range n * 9 / 10 {
 		b.Evict(i)
 	}
 
@@ -439,7 +483,7 @@ func TestMapShrink(t *testing.T) {
 		newSize := stats.Alloc
 
 		return newSize < oldSize/2
-	})
+	}, 5*time.Second)
 
 	t.Logf("alloc after:\t%d bytes", stats.Alloc)
 

@@ -316,6 +316,22 @@ func TestMoveBackwards(t *testing.T) {
 	})
 }
 
+func TestEmptyList(t *testing.T) {
+	var l list.List[int]
+
+	assertEqual(t, l.Len(), 0)
+	assertEqual(t, l.Front(), (*list.Element[int])(nil))
+	assertEqual(t, l.Back(), (*list.Element[int])(nil))
+}
+
+func TestNewElementDetached(t *testing.T) {
+	e := list.NewElement(1)
+
+	assertEqual(t, e.Value, 1)
+	assertEqual(t, e.Next(), (*list.Element[int])(nil))
+	assertEqual(t, e.Prev(), (*list.Element[int])(nil))
+}
+
 func TestDo(t *testing.T) {
 	var l list.List[string]
 
